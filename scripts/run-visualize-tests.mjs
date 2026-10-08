@@ -23,8 +23,8 @@
  * 运行：node scripts/run-visualize-tests.mjs
  */
 import { execFileSync } from 'node:child_process'
-import { readFile, writeFile } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { dirname, resolve } from 'node:path'
 import { createContext, runInContext, Script } from 'node:vm'
 
 import { assertNonEmpty, bundleHost, fail, importBundle, ok, repoRoot } from './lib/bundle.mjs'
@@ -229,6 +229,11 @@ const bodyStart = html.indexOf('>', openTags[0]?.index ?? 0) + 1
 const bodyEnd = html.indexOf('</script>', bodyStart)
 const script = assertNonEmpty(html.slice(bodyStart, bodyEnd), '内联 <script> 内容')
 
+// Create the directory first: `bundleHost` does its own mkdir, but it only runs
+// further down, and on a fresh clone `.tmp/` does not exist at all — so without
+// this the write below fails with a bare ENOENT that has nothing to do with
+// what this gate is actually checking.
+await mkdir(dirname(SCRIPT_OUT), { recursive: true })
 await writeFile(SCRIPT_OUT, script, 'utf8')
 
 // node --check 以 stdio:'ignore' 运行：本机受限模式下管道抓输出会失败，只看退出码。
