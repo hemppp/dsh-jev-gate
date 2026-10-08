@@ -442,6 +442,7 @@ async function main() {
   const typesSource = await readFile(resolve(repoRoot, 'host/types.ts'), 'utf8')
 
   const clientCode = existsSync(CLIENT_ENTRY_ABS) ? await readFile(CLIENT_ENTRY_ABS, 'utf8') : null
+  const deciderSource = await readFile(resolve(repoRoot, 'host/decider.ts'), 'utf8')
 
   const catalogModule = await importBundle(
     await bundleHost({ entry: 'host/catalog.ts', outfile: '.tmp/contract/catalog.mjs' }),
@@ -589,6 +590,54 @@ async function main() {
     }
   })
 
+  /* -- 10. the browser's copy of the default endpoint base URL ----- */
+  //
+  // `client/index.js` cannot import from the host, so it carries its own copy of the
+  // host's documented default base URL. It is used to *display* what a blank base URL
+  // would resolve to, and to derive a credential reference name when the user has
+  // typed no address at all. If the two copies drift, the panel would show a URL the
+  // host never calls and derive a reference name for the wrong gateway — silent, and
+  // only visible in the field the user did not type.
+  check('client default base URL vs host', () => {
+    assert(clientCode !== null, `${CLIENT_ENTRY} does not exist`)
+    const hostMatch = /export\s+const\s+DEFAULT_BASE_URL\s*(?::\s*string\s*)?=\s*['"]([^'"]+)['"]/.exec(
+      deciderSource,
+    )
+    assert(
+      hostMatch !== null,
+      `host/decider.ts must export DEFAULT_BASE_URL as a string literal so the browser half can be pinned to it`,
+    )
+    const resolved = resolveClientValue('DEFAULT_DECIDER_BASE_URL', clientCode)
+    assert(
+      resolved.value !== undefined,
+      `could not resolve DEFAULT_DECIDER_BASE_URL from ${CLIENT_ENTRY} — the browser half must expose its copied default`,
+    )
+    assertEqual(
+      resolved.value,
+      hostMatch[1],
+      'DEFAULT_DECIDER_BASE_URL (client/index.js) vs DEFAULT_BASE_URL (host/decider.ts)',
+    )
+  })
+
+  /* -- 11. the panel-only inputs never leak into the field contract */
+  //
+  // The two combined inputs exist only inside the panel: the host has no settings path
+  // for them, and staging one throws `plugin card has no field`. If either leaked into
+  // FIELDS it would be compared against `VOLATILE_FIELDS` as a field the host must
+  // store, and the first save would be rejected by the host.
+  check('panel-only inputs stay out of FIELDS', () => {
+    assert(clientCode !== null, `${CLIENT_ENTRY} does not exist`)
+    const fields = resolveClientValue('FIELDS', clientCode)
+    assert(fields.value !== undefined, `could not resolve FIELDS from ${CLIENT_ENTRY}`)
+    const declared = new Set(fields.value)
+    for (const panelOnly of ['endpointUrl', 'modelRoute']) {
+      assert(
+        !declared.has(panelOnly),
+        `FIELDS must not contain the panel-only input "${panelOnly}" — the host has no such settings path`,
+      )
+    }
+  })
+
   // Notes are judgement calls the check made; print them before the verdict so a
   // reader of a failing run still sees which assertions were deliberately
   // relaxed and why.
@@ -601,7 +650,7 @@ async function main() {
   }
   ok(
     NAME,
-    `9 contract assertions passed (catalog, decision points, bundle row, manifest, paths, FIELDS, deciders, defaults, client table)`,
+    '11 contract assertions passed (catalog, decision points, bundle row, manifest, paths, FIELDS, deciders, defaults, client table, client default base URL, panel-only inputs)',
   )
 }
 

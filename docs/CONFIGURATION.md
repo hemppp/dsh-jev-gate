@@ -103,6 +103,34 @@
 `deciderCredentialRef` 匹配 `/^[A-Za-z_][A-Za-z0-9_]*$/`，否则给出中文 `deciderProblem`
 （并把它说成凭据的**名字**，不是值）。
 
+### 四之二、配置面板里的「一次填写」
+
+上面五个字段都要**分别**填写，但人脑子里的地址和路由都是一整串：`https://…/v1/…`、
+`openai/gpt-5`。配置面板（`client/index.js`）因此在「外部裁决器」一节多给两行**只属于面板
+自己**的输入，把它们拆进设置字段：
+
+| 面板输入 | 拆成 | 规则 |
+| --- | --- | --- |
+| 接口地址 | `deciderBaseUrl` + `deciderEndpointPath` | 协议头可省（补 `https://`）；URL 里带的 `user:password` **被丢掉**（否则密钥会写进设置文件）；查询串跟着路径走 |
+| 模型路由 | `deciderProvider` + `deciderModel` | 按首个 `/` 切开；没有斜杠就只有模型、没有提供方覆盖 |
+| —（自动） | `deciderCredentialRef` | 由 `deciderBaseUrl` 的 hostname 派生：`api.example.com` → `API_EXAMPLE_COM`；首字符非字母时加 `GATE_` 前缀。同一 profile 里两个网关因此不会互相覆盖密钥 |
+
+要点（都是代码里钉死的，`scripts/run-render-tests.mjs` 第 14 节逐条断言）：
+
+- **这两行不是设置字段。** 宿主没有 `endpointUrl` / `modelRoute` 这两个路径；把它们塞进
+  `SPECS` 会让 `SettingsFormModel.stage()` 抛 `plugin card has no field`。
+  `scripts/run-contract-check.mjs` 断言它们不在 `FIELDS` 里。
+- **可见可改，派生不覆盖手输。** 规则是**归属**不是过期：面板可以填没人管的字段，用户一旦
+  自己改过某格，那格就归用户，之后再怎么动上面的输入都不覆盖它，直到按「恢复默认」把它交还
+  派生。
+- **重置面板输入会把两格放回原样**，而不是回到「空白的默认值」——否则按一次重置就把用户
+  已经配好的网关抹掉了。
+- 面板输入在**保存前**会被清掉，之后由已存的两半重新拼出来，所以别的页面改了设置，这里跟着
+  变。
+- `client/index.js` 里有一份 `DEFAULT_DECIDER_BASE_URL` 拷贝（用于显示空基地址会解析成什么、
+  以及用户什么都没填时派生引用名）；它与 `host/decider.ts` 的 `DEFAULT_BASE_URL` 由契约门禁
+  钉在一起。
+
 ## 五、`rulesJson`：按决策点覆盖力度
 
 因为宿主把字段名当作**单段路径**（`path: [field]`），数组无法作为一个字段进来，所以规则以

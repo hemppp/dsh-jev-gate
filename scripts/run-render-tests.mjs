@@ -721,6 +721,12 @@ function evaluateClientModule(source) {
   let definition = null
   const sandbox = {
     console,
+    // A bare vm context has only the ECMAScript intrinsics: `URL` is a host/web
+    // global. Without it the client's endpoint parsing throws `URL is not defined`,
+    // `splitEndpointUrl` catches that and returns "nothing filled in", and the whole
+    // derivation path silently degrades — a green run for a failure a real browser
+    // would never have. Supplying it keeps the test honest about the browser.
+    URL,
     window: {
       __ModuleLoader__: {
         load(record) {
@@ -862,13 +868,29 @@ check(
 )
 
 const labels = findByTag(form, 'label').map((node) => node.props.htmlFor)
+// 面板自己的两个输入（endpointUrl / modelRoute）夹在 deciderKind 之后：它们不是设置
+// 字段，而是被拆进下面两格的来源，所以顺序里必须留在拆分结果之前。
 // 密钥框的 label 夹在 `deciderCredentialRef` 与 `deciderAuthority` 之间——面板就是把它
 // 插在引用名那一行后面的。这条断言顺带钉住了这个位置。
+const renderedLabels = api.FIELD_ROWS.map((row) => row.field)
+const refIndex = renderedLabels.indexOf(api.REF_FIELD)
 check(
-  sameJson(labels, [...api.FIELDS.slice(0, api.FIELDS.indexOf(api.REF_FIELD) + 1), api.SECRET_FIELDS[0], ...api.FIELDS.slice(api.FIELDS.indexOf(api.REF_FIELD) + 1)]),
-  `23 个 label 应按 FIELD_ROWS 顺序出现、密钥框紧随引用名，实际 ${JSON.stringify(labels)}`,
+  sameJson(labels, [...renderedLabels.slice(0, refIndex + 1), api.SECRET_FIELDS[0], ...renderedLabels.slice(refIndex + 1)]),
+  `label 应按 FIELD_ROWS 顺序出现、密钥框紧随引用名，实际 ${JSON.stringify(labels)}`,
 )
-check(labels.length === 23, `面板应有 22 个配置字段 + 1 个密钥框的 label，实际 ${labels.length}`)
+check(
+  labels.length === api.FIELDS.length + api.PANEL_ONLY_FIELDS.length + api.SECRET_FIELDS.length,
+  `面板应有 ${api.FIELDS.length} 个配置字段 + ${api.PANEL_ONLY_FIELDS.length} 个面板输入 + ${api.SECRET_FIELDS.length} 个密钥框的 label，实际 ${labels.length}`,
+)
+// 面板私有输入不得混进 FIELDS：宿主没有这两条路径，写进去必被拒。
+check(
+  api.FIELDS.length === 22 && sameJson(api.PANEL_ONLY_FIELDS, ['endpointUrl', 'modelRoute']),
+  `FIELDS 应仍是 22 个设置字段且面板输入另列，实际 FIELDS=${api.FIELDS.length} PANEL_ONLY=${JSON.stringify(api.PANEL_ONLY_FIELDS)}`,
+)
+check(
+  sameJson(api.DERIVED_FIELDS, ['deciderProvider', 'deciderModel', 'deciderBaseUrl', 'deciderEndpointPath', 'deciderCredentialRef']),
+  `被自动填的行应正好是五个派生字段，实际 ${JSON.stringify(api.DERIVED_FIELDS)}`,
+)
 
 for (const field of ['enabled', 'persistEnabled', 'interveneAtStateTransition', 'interveneAtPreFinish', 'requireBaseline']) {
   const control = findByTag(form, 'button').filter((node) => node.props['aria-label'] === findById(form, field)?.props !== void 0)
@@ -923,7 +945,8 @@ check(
 )
 for (const node of numeric) check(node.props.value === String(DEFAULTS[node.props.id]), `${node.props.id} 的初值应是 ${DEFAULTS[node.props.id]}`)
 
-// 文本输入框：11 个（4 个数字字段在原语里同样是 type="text"，靠 inputMode 区分）。
+// 文本输入框：13 个（4 个数字字段在原语里同样是 type="text"，靠 inputMode 区分；
+// 两个面板输入也是普通文本框）。
 const textInputs = findByTag(form, 'input').filter((node) => node.props.type === 'text')
 check(
   sameJson(textInputs.map((node) => node.props.id), [
@@ -931,6 +954,8 @@ check(
     'maxGapsPerIntervention',
     'stateDir',
     'debounceMs',
+    'endpointUrl',
+    'modelRoute',
     'deciderProvider',
     'deciderModel',
     'deciderBaseUrl',
@@ -939,7 +964,7 @@ check(
     'deciderMaxQuestions',
     'rulesJson',
   ]),
-  `文本输入框应有 11 个且顺序正确，实际 ${JSON.stringify(textInputs.map((node) => node.props.id))}`,
+  `文本输入框应有 13 个且顺序正确，实际 ${JSON.stringify(textInputs.map((node) => node.props.id))}`,
 )
 check(findById(form, 'stateDir').props.value === '.dsh-jev-gate', '账本目录初值应取默认值')
 check(findById(form, 'deciderEndpointPath').props.value === '/v1/systemone', '接口路径初值应取默认值')
@@ -1238,7 +1263,115 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
 }
 
 /* ================================================================== *
- * 13. 语言切换
+ * 14. 自动拼接：一次填写 → 拆进设置字段 → 可见可改
+ * ================================================================== */
+
+{
+  const scope = makeScope({ base: DEFAULTS })
+  const derived = mountPanel(scope)
+  let tree = derived.render()
+
+  // 未动过时，两个面板输入显示的是「已存两半拼回的样子」：初值 base 留空 + path
+  // 有默认值，所以 URL 行应当显示默认基地址 + 默认路径，而不是空的。
+  check(
+    findById(tree, 'endpointUrl').props.value === 'https://api.typesafe.ai/v1/systemone',
+    `接口地址行初值应是已存两半拼回的样子，实际 ${JSON.stringify(findById(tree, 'endpointUrl').props.value)}`,
+  )
+  check(findById(tree, 'modelRoute').props.value === '', '提供方与模型都为空时路由行应为空')
+  check(findById(tree, 'deciderBaseUrl').props.value === '', '默认基地址不该出现在 baseUrl 字段里')
+
+  // 填一次完整地址 → 拆进两格；引用名按 host 自动生成。
+  findById(tree, 'endpointUrl').props.onChange({ target: { value: 'https://gateway.example.com/v1/systemone' } })
+  tree = derived.render()
+  check(findById(tree, 'deciderBaseUrl').props.value === 'https://gateway.example.com', '完整地址应拆出基地址')
+  check(findById(tree, 'deciderEndpointPath').props.value === '/v1/systemone', '完整地址应拆出接口路径')
+  check(findById(tree, 'deciderCredentialRef').props.value === 'GATEWAY_EXAMPLE_COM', `引用名应由 host 自动派生，实际 ${JSON.stringify(findById(tree, 'deciderCredentialRef').props.value)}`)
+  check(findById(tree, api.SECRET_FIELDS[0]).props.disabled === false, '自动派生出引用名后密钥框应解锁')
+
+  // 不写协议头、带 user:password、以及带查询串：三种都要落到合法的两半里，
+  // 其中凭据必须被丢掉（否则密钥会写进设置文件）。
+  findById(tree, 'endpointUrl').props.onChange({ target: { value: 'user:pw@api.example.org/v2?x=1' } })
+  tree = derived.render()
+  check(findById(tree, 'deciderBaseUrl').props.value === 'https://api.example.org', '无协议头应补上 https，且不得带出 user:password')
+  check(findById(tree, 'deciderEndpointPath').props.value === '/v2?x=1', '查询串应跟着路径走')
+
+  // 填一次路由 → 拆成提供方与模型。
+  findById(tree, 'modelRoute').props.onChange({ target: { value: 'openai/gpt-5' } })
+  tree = derived.render()
+  check(findById(tree, 'deciderProvider').props.value === 'openai', '路由应拆出提供方')
+  check(findById(tree, 'deciderModel').props.value === 'gpt-5', '路由应拆出模型 id')
+
+  // 拆出来的值必须真的进设置（进 ops），而不只是显示在面板上。
+  await derived.props.save()
+  await flush()
+  const savedPaths = scope.log.mutates.flatMap((call) => call.ops.map((op) => op.path.join('.'))).sort()
+  check(
+    sameJson(savedPaths, ['deciderBaseUrl', 'deciderCredentialRef', 'deciderEndpointPath', 'deciderModel', 'deciderProvider']),
+    `自动填的五个字段都应提交进设置，实际 ${JSON.stringify(savedPaths)}`,
+  )
+
+  // 保存后面板输入必须交回给存储：草稿若留着，两行会被钉死在用户第一次敲的地址上，
+  // 此后即使别的页面改了设置也看不见。
+  tree = derived.render()
+  check(
+    findById(tree, 'endpointUrl').props.value === 'https://api.example.org/v2?x=1',
+    `保存后接口地址行应由已存两半重新拼出，实际 ${JSON.stringify(findById(tree, 'endpointUrl').props.value)}`,
+  )
+
+  // 「派生值永不覆盖手输值」：用户手改过 deciderProvider 之后，再动 URL/路由，
+  // 那个手输的提供方必须原样留着。
+  tree = derived.render()
+  findById(tree, 'deciderProvider').props.onChange({ target: { value: 'anthropic' } })
+  tree = derived.render()
+  findById(tree, 'modelRoute').props.onChange({ target: { value: 'mistral/large' } })
+  tree = derived.render()
+  check(findById(tree, 'deciderProvider').props.value === 'anthropic', '手输过的字段不得被自动填覆盖')
+  check(findById(tree, 'deciderModel').props.value === 'large', '没手输过的那半仍应跟着路由走')
+  check(findById(tree, 'deciderBaseUrl').props.value === 'https://api.example.org', '换一个手输字段不应影响另一条派生链')
+
+  // 手输的值要能存下去（这条守护的是 own() 的 touched 判断，而不是显示层）。
+  await derived.props.save()
+  await flush()
+  check(scope.getSnapshot().user.deciderProvider === 'anthropic', '手输的提供方应原样存进设置')
+
+  // 按「恢复默认」= 把字段交还派生：暂存的是 base 值（这里基线里没有这一项），
+  // 保存后才会真正 unset。
+  derived.props.resetField('deciderProvider')
+  tree = derived.render()
+  check(findById(tree, 'deciderProvider').props.value === '', '重置后暂存的是基线值，未保存前不再是手输的那个')
+
+  // 面板输入自己的重置：丢掉草稿，并把被它拆开的两格放回原样。
+  findById(tree, 'endpointUrl').props.onChange({ target: { value: 'https://elsewhere.example.net/v9' } })
+  tree = derived.render()
+  check(findById(tree, 'deciderBaseUrl').props.value === 'https://elsewhere.example.net', '改 URL 行应立刻拆开')
+  derived.props.resetField('endpointUrl')
+  tree = derived.render()
+  check(
+    findById(tree, 'endpointUrl').props.value === 'https://api.example.org/v2?x=1',
+    `面板输入重置后应回到改之前的两半拼接结果，实际 ${JSON.stringify(findById(tree, 'endpointUrl').props.value)}`,
+  )
+  check(
+    findById(tree, 'deciderBaseUrl').props.value === 'https://api.example.org',
+    '面板输入重置后它拆开的字段也必须放回原样，而不是变成空白的默认值',
+  )
+
+  // discard 同时丢掉面板输入的草稿：这条是唯一保证「撤销」是真撤销的地方。
+  findById(tree, 'modelRoute').props.onChange({ target: { value: 'zzz/leftover' } })
+  derived.props.discard()
+  tree = derived.render()
+  check(findById(tree, 'modelRoute').props.value === 'anthropic/large', `discard 后面板草稿应被丢掉，实际 ${JSON.stringify(findById(tree, 'modelRoute').props.value)}`)
+
+  // 派生字段的提示语要说明它是自动填的、且手输会被保留。
+  check(treeText(tree).includes('已由上面自动填好'), '派生字段的提示应说明它由上面自动填好')
+  const endpointUrlField = findAll(tree, (node) => node.type === 'div').filter((node) => findById(node, 'endpointUrl') !== null)[0]
+  check(
+    findByTag(endpointUrlField, 'p').map((node) => textOf(node)).some((line) => line.includes('一次填完整条地址')),
+    '面板输入必须带自己的使用说明',
+  )
+}
+
+/* ================================================================== *
+ * 15. 语言切换
  * ================================================================== */
 
 {

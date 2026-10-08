@@ -346,7 +346,14 @@ async function askEndpoint(deps: DeciderDeps, request: DeciderRequest): Promise<
   return parseAnswers(extractJson(text))
 }
 
-const DEFAULT_BASE_URL = 'https://api.typesafe.ai'
+/**
+ * The documented default base URL for `deciderKind: 'endpoint'`.
+ *
+ * Exported because `client/index.js` derives the reference name and the credential
+ * hint from this same host, and `scripts/run-contract-check.mjs` asserts the two
+ * copies are the same string — one constant, two consumers, no drift.
+ */
+export const DEFAULT_BASE_URL = 'https://api.typesafe.ai'
 
 function joinUrl(base: string, path: string): string {
   const trimmedBase = base.replace(/\/+$/, '')

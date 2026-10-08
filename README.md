@@ -195,8 +195,8 @@ npm run gates
 | 宿主测试 | `npm run test:host` | 依赖宿主 Service 的一层行为正确 |
 | 客户端测试 | `npm run test:client` | 浏览器半边行为正确 |
 | 演示页 | `npm run test:visualize` | `docs/visualize.html` 真的能跑，且它抄过去的决策点/缺口/力度/绑定与 `host/` 逐条一致 |
-| 面板渲染 | `npm run test:render` | 配置面板真的被渲染并驱动：结构、控件初值、改动→保存→回读、密钥全流程、降级态 |
-| 契约 | `npm run check:contract` | 目录/配置/两半边之间没有漂移 |
+| 面板渲染 | `npm run test:render` | 配置面板真的被渲染并驱动：结构、控件初值、改动→保存→回读、密钥全流程、自动拼接、降级态 |
+| 契约 | `npm run check:contract` | 目录/配置/两半边之间没有漂移（含面板里那份默认基地址拷贝） |
 | 密钥 | `npm run check:secrets` | 没有凭据形状的字符串，`host/`+`client/` 没有 `process.env` 读取 |
 | 构建 | `npm run build` | `tsc` 把 `host/` 编译到 `lib/` |
 | `lib` 同步 | `npm run check:libsync` | 仓库里的 `lib/` 与一次全新编译逐字节一致 |
@@ -212,8 +212,8 @@ npm run gates
 | `npm run test:host` | 0 | 通过：`OK run-host-tests: 153 assertions passed` |
 | `npm run test:client` | 0 | 通过：`OK run-client-tests: 67 assertions passed` |
 | `npm run test:visualize` | 0 | 通过：`OK run-visualize-tests: 50 assertions passed` |
-| `npm run test:render` | 0 | 通过：`OK run-render-tests: 129 条断言全通过（配置面板真实渲染：结构、保存、密钥、降级态）` |
-| `npm run check:contract` | 0 | 通过：`OK run-contract-check: 9 contract assertions passed` |
+| `npm run test:render` | 0 | 通过：`OK run-render-tests: 155 条断言全通过（配置面板真实渲染：结构、保存、密钥、降级态）` |
+| `npm run check:contract` | 0 | 通过：`OK run-contract-check: 11 contract assertions passed` |
 | `npm run check:secrets` | 0 | 通过：`33 file(s) scanned, 0 findings, 0 process.env reads, 146 exemption(s)` |
 | `npm run build` | 0 | 通过（产出 `lib/`） |
 | `npm run check:libsync` | 0 | 通过：`lib/ matches a fresh tsc build byte-for-byte (76 file(s) compared)` |
@@ -227,6 +227,23 @@ npm run gates
 
 `test:render` 是后加的第十步。它的来历同样是一次「门禁逼出真缺陷」：写它之前配置面板从未被渲染过，
 它当场抓出了 `inject()` 不在改引用名时重新读凭据状态这一条（见上一节）。
+
+### 配置面板的「一次填写」
+
+外部裁决器那一节现在有两行**只属于面板**的输入：整条接口地址（拆成 `deciderBaseUrl` +
+`deciderEndpointPath`）和整条模型路由（拆成 `deciderProvider` + `deciderModel`）。凭据引用名则
+由基地址的 hostname 自动派生，所以 `https://api.typesafe.ai` 一下就变成
+`API_TYPESAFE_AI`——原来人只能手填，而宿主只接受 `/^[A-Za-z_][A-Za-z0-9_]*$/`。
+
+三条规则决定了它的行为，细节见 `docs/CONFIGURATION.md` 第四之二节：
+
+- **拆出来的值仍然可见可改**，并且**手输过的格子不会被自动填覆盖**。规则是归属不是过期：
+  用户一改那格就归用户，直到按「恢复默认」才交还派生。
+- **重置面板输入会把两格放回原样**，而不是回到空白的默认值——否则按一次就把已配好的网关抹掉。
+- 这两行**不是设置字段**：宿主没有 `endpointUrl` / `modelRoute` 这两个路径，
+  `scripts/run-contract-check.mjs` 断言它们不在 `FIELDS` 里。
+
+面板里那份默认基地址是宿主常量的拷贝（浏览器半边不能 import 宿主），由契约门禁钉住两侧一致。
 
 ### ⚠️ 交付的事实边界
 
@@ -243,8 +260,8 @@ npm run gates
   未知团队工具过闸等。但它是**进程内**的：宿主 Service 用一个「访问任何属性就抛错」的 `Proxy` 顶替，
   所以"在真实 DSH 宿主里接对了没有"仍然只是**类型级 + 契约级**证据，不是一次真实宿主集成。
 - **配置面板在真实浏览器里被渲染过，但那是人工检查，不是门禁。** 现在有 `npm run test:render`
-  （129 条断言）真的把 `client/index.js` 挂载成一个元素树并驱动它——控件初值、改动→保存→回读、
-  密钥全流程、`unavailable` / `readOnly` 两个降级态、语言切换都跑在里面。**但它用的是逐行忠实的
+  （155 条断言）真的把 `client/index.js` 挂载成一个元素树并驱动它——控件初值、改动→保存→回读、
+  密钥全流程、两行合并输入的自动拼接、`unavailable` / `readOnly` 两个降级态、语言切换都跑在里面。**但它用的是逐行忠实的
   桩**（宿主 asar 里真实原语 `Switch`/`SettingsForm`/`SettingsValueField`/`SettingsSecretField`/
   `settingsNumberField`/`settingsTextField`/`SettingsFormModel` 的位置都注在桩上方），因为真实原语包
   顶层 import 了 react / shiki / katex 等 15+ 外部包，把它们拉进 `gates` 就等于让门禁依赖浏览器工具链。
@@ -256,6 +273,8 @@ npm run gates
   在 `test:render` 写起来之前，`jsx` 参数顺序写反、保存按钮永远 `disabled`、密钥框在引用名为空时
   反而可写这几类缺陷，文本比对一律看不见——其中「改了引用名不重新问凭据服务，导致徽章对已有密钥的
   引用名谎报『还没有密钥』」就是这道门禁当场抓出来并修掉的。
+  写合并输入时它还抓出第二处：vm 沙箱里没有 `URL` 这个宿主全局，`splitEndpointUrl()` 会静默
+  退化成「什么都没填」，门禁在一个浏览器里根本不会发生的故障上给绿灯——沙箱已补上 `URL`。
 - **演示页 `docs/visualize.html` 在真实浏览器里被渲染过，但那是人工检查，不是门禁。** 本机用一次隔离
   Chromium 打开 `file:///…/visualize.html`（窗口 1800×1010）并截图：canvas 有画面、中文标签清晰、
   面板文本完整；`Space` 会让画面**冻结**（间隔 1.2 秒的两张截图逐字节相同，而冻结前同样间隔的两张

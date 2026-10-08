@@ -51,8 +51,8 @@ npm run typecheck
 import 被换成 `Proxy` 桩（模块级解构与 `class extends` 都能活下来）——因为它真要 import
 需要 DOM 和客户端运行时。
 
-它有 **10 个** `check`/`checkAsync` 调用（计数器报的是 "9 contract assertions passed"，
-两者数量不同）：
+它有 **11 个** `check` 调用（下表是 12 行，因为第 5、6 两行同属「package.json exports」那一个
+`check`）。以前计数器和调用数是对不上的，现在一致，都是 11：
 
 | # | 断言 | 它防的是什么 |
 | --- | --- | --- |
@@ -66,6 +66,8 @@ import 被换成 `Proxy` 桩（模块级解构与 `class extends` 都能活下�
 | 8 | `DECIDER_KINDS` 的每一项都在 `IMPLEMENTED_DECIDERS` 里 | 又出现一个"声明了 llm 却没实现" |
 | 9 | `DEFAULT_CONFIG.enabled === false` 且 `=== 'dry-run'` | 默认姿态被悄悄改成会拦人 |
 | 10 | 客户端 `DECISION_POINTS` 的 id 集合与每点 `ceiling` 与 `host/catalog.ts` 一致 | 参照表与真实目录漂移 |
+| 11 | 客户端 `DEFAULT_DECIDER_BASE_URL` === `host/decider.ts` 导出的 `DEFAULT_BASE_URL` | 面板里那份拷贝单边漂移——它决定"空基地址会解析成什么"以及凭据引用名从哪派生，漂了只有用户没填的那一格会错 |
+| 12 | `endpointUrl` / `modelRoute` **不在** `FIELDS` 里 | 面板私有的合并输入混进字段契约，宿主会答 `Config field "endpointUrl" is not volatile`，或者 `stage()` 直接抛 `plugin card has no field` |
 
 **它明确放弃了一部分覆盖面**，而且这个放弃是可见的：断言 6 对 `lib` / `lib/…` 只打印一行
 `NOTE ... build output absent (checked by run-lib-sync.mjs after the build step)`，不判失败。
@@ -131,7 +133,12 @@ effect / `form === null` 时不建卡）、`summary` 视图、完整结构（3 �
 6 个下拉框的选项集合、5 个开关的 `aria-checked`、4 个数字字段的 `inputMode`、密钥框的
 `type=password`、14 条决策点参照表、保存按钮初始禁用）、改动→保存→回读（含 `unset`）、
 无效数字挡住保存、文本 `trim`、宿主拒收后的 `saveFailed` 与 `discard`、密钥全流程
-（含"改引用名 + 填密钥"必须写到新名字下）、`unavailable` / `readOnly` 两个降级态、语言切换。
+（含"改引用名 + 填密钥"必须写到新名字下）、配置面板的两条**合并输入**（整条接口地址拆成
+`deciderBaseUrl` + `deciderEndpointPath`、整条模型路由拆成 `deciderProvider` +
+`deciderModel`，凭据引用名由 hostname 派生；无协议头补 `https://`、URL 里的
+`user:password` 被丢掉、五个派生字段真的进了 `mutate` 的 ops、手输过的格子不被覆盖、
+重置面板输入把两格放回原样、保存后由已存两半重新拼出）、`unavailable` / `readOnly`
+两个降级态、语言切换。
 
 **原语是逐行忠实的桩，不是真实包。** 宿主 asar 里真实实现的行号注在每个桩上方
 （`Switch` :3394、`SettingsForm` :6918、`SettingsValueField` :6973、`SettingsSecretField` :7052、
@@ -141,9 +148,13 @@ simple-icons / micromark 系等 15+ 外部包，还带 30+ 个 CSS module——�
 依赖浏览器工具链，与「门禁只依赖 `node` 和本包已装依赖」这条底线冲突。
 
 **所以它证明不了的事**：CSS 观感、焦点顺序、真实浏览器对 `aria-*` 的播报。真机安装验证才管这些，
-本轮明确不在范围内。当前实测：`OK run-render-tests: 129 条断言全通过`。
+本轮明确不在范围内。当前实测：`OK run-render-tests: 155 条断言全通过`。
 它抓到过一条真缺陷——`inject()` 只把 `form.actions()` 原样交出去，改凭据引用名时不重新读凭据状态，
 于是**徽章会对一个已经配了密钥的引用名谎报"还没有密钥"**（见第七之二节第 8 条）。
+
+写合并输入时它还当场抓出第二个坑：vm 沙箱里没有 `URL` 这个宿主全局，`splitEndpointUrl()`
+会静默退化成「什么都没填」。真实浏览器有它，所以测试环境必须补上——否则这道门禁会在一个
+浏览器里根本不会发生的故障上给出绿灯。
 
 ---
 
@@ -251,8 +262,8 @@ scanned"。五个检测器：
 | `test:host` | 0 | `OK run-host-tests: 153 assertions passed` |
 | `test:client` | 0 | `OK run-client-tests: 67 assertions passed` |
 | `test:visualize` | 0 | `OK run-visualize-tests: 50 assertions passed` |
-| `test:render` | 0 | `OK run-render-tests: 129 条断言全通过（配置面板真实渲染：结构、保存、密钥、降级态）` |
-| `check:contract` | 0 | `OK run-contract-check: 9 contract assertions passed` |
+| `test:render` | 0 | `OK run-render-tests: 155 条断言全通过（配置面板真实渲染：结构、保存、密钥、降级态）` |
+| `check:contract` | 0 | `OK run-contract-check: 11 contract assertions passed` |
 | `check:secrets` | 0 | `OK run-secret-scan: 33 file(s) scanned, 0 findings, 0 process.env reads, 146 exemption(s)` |
 | `build` | 0 | 无输出（产出 `lib/`） |
 | `check:libsync` | 0 | `OK run-lib-sync: lib/ matches a fresh tsc build byte-for-byte (76 file(s) compared)` |
@@ -353,7 +364,7 @@ TypeError: Cannot read properties of undefined (reading 'bind')
 遇到 `insert:` / `replace:` 这一层，块状形式就跳过 wrapper 让嵌套的 `- ` 行按顶层 row 读，
 流状形式（`- insert: [{ id: …, name: … }]`）则用一对新增的小助手 `splitFlow` / `readFlowRows`
 把内联的 `{…}` 逐对读出来。修好之后 `check:contract` 报
-`OK run-contract-check: 9 contract assertions passed (catalog, decision points, bundle row, manifest, paths, FIELDS, deciders, defaults, client table)`。
+`OK run-contract-check: 11 contract assertions passed (catalog, decision points, bundle row, manifest, paths, FIELDS, deciders, defaults, client table, client default base URL, panel-only inputs)`。
 
 ### 5. `check:libsync`——门禁自身的缺陷（现已修好：改的是门禁）
 
@@ -385,7 +396,7 @@ FAIL run-lib-sync: lib is stale — 0 missing, 0 stale-extra, 36 differing of 72
 
 ---
 
-## 七之二、host 测试第一次跑起来之后暴露的两条真缺陷
+## 七之二、门禁跑起来之后暴露的真缺陷
 
 这一节是本文档最该读的部分。前五条是"工程没做完"，下面两条是**机制本身是假的**：
 两条都不会让任何门禁变红（typecheck 通过、契约检查通过、客户端契约镜像也通过），
@@ -490,6 +501,32 @@ id 是任务 id、requirement 是任务标题——**真实数据里这句话永
 
 `test:render` 的断言是：填入引用名后**恰好一次** `credentials.describe`、无关引用名的
 `reference-updated` **不**触发回读。
+
+### 9. 面板私有输入进不了设置模型（写合并输入时踩到，已修好）
+
+配置面板要显示「整条接口地址」和「整条模型路由」，可宿主只认
+`deciderBaseUrl` + `deciderEndpointPath`、`deciderProvider` + `deciderModel`。第一版把两个合并
+输入当普通字段处理，问题立刻出现：`SettingsFormModel.stage()` 会调 `spec(field)`，对不在宿主
+volatile 集合里的名字抛 `plugin card has no field ${field}`——面板一打字就炸。
+
+修法是承认它们**不是设置字段**：宿主根本没有 `endpointUrl` / `modelRoute` 这两个路径，加进去
+只会让面板变成唯一配置途径。`FIELD_ROWS` 上标 `panelOnly: true`，`SPECS` / `FIELDS` 排除它们
+（契约门禁第 12 条钉住这一点），草稿存在 `JevGateForm.local` 这个普通 Map 里，按已存两半
+拼接的结果播种，保存与 discard 时清空。
+
+同一次改写里还定下两条语义，都是 `test:render` 第 14 节逐条断言的：
+
+- **派生不覆盖手输**：规则是归属不是过期，用户改过的格子归用户，按「恢复默认」才交还派生。
+- **重置面板输入把两格放回原样**（`JevGateForm.derivedBefore`），而不是回到空白的设置默认值
+  ——否则按一次重置就把用户已配好的网关抹掉。
+
+顺带补上契约门禁第 11 条：`host/decider.ts` 的 `DEFAULT_BASE_URL` 改为**导出**，面板里那份
+`DEFAULT_DECIDER_BASE_URL` 拷贝由门禁钉住。漂了的后果只有用户**没填**的那一格会错（显示的默认
+地址、以及从 hostname 派生的引用名都指向另一个网关），很难靠肉眼发现。
+
+**顺带修的测试环境缺陷**：vm 沙箱只有 ECMAScript 内建对象，没有 `URL` 这个宿主全局，
+`splitEndpointUrl()` 会 catch 住 `TypeError` 并返回「什么都没填」——门禁在一个浏览器里根本不会
+发生的故障上给绿灯。沙箱现在显式带上 `URL`。
 
 ---
 

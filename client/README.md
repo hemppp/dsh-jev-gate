@@ -48,8 +48,44 @@ declaration order — 22 of them:
 A field missing from this page is a knob nobody can change; a field that is here but
 not volatile on the host is a save the host will always reject.
 `scripts/run-contract-check.mjs` computes the volatile set from the host schema and
-compares it against the exported `FIELDS`, so the two sides cannot drift apart
+compares against the exported `FIELDS`, so the two sides cannot drift apart
 silently.
+
+### Panel-only inputs
+
+`FIELD_ROWS` carries two rows that are **not** settings fields: `endpointUrl` and
+`modelRoute` (`panelOnly: true`). They exist because a URL and a model route are one
+thing to a person and two to the host:
+
+- `endpointUrl` splits into `deciderBaseUrl` + `deciderEndpointPath`. The scheme is
+  optional (`https://` is filled in); embedded `user:password` is **dropped** rather
+  than written into the settings file; a query string rides along with the path.
+  `joinEndpointUrl()` is the mirror of the host's `joinUrl()`, and
+  `splitEndpointUrl()` must be its exact inverse.
+- `modelRoute` splits into `deciderProvider` + `deciderModel` at the first `/`. A
+  route with no slash is a model id with no provider override — the host never
+  concatenates these two back, so this is not a round trip.
+- `deciderCredentialRef` is then derived from `deciderBaseUrl`'s hostname
+  (`api.example.com` → `API_EXAMPLE_COM`), because the host only accepts
+  `/^[A-Za-z_][A-Za-z0-9_]*$/` and every natural thing a user would type is illegal.
+  Deriving per host also keeps two gateways in one profile from overwriting each
+  other's key.
+
+They cannot be staged in the model: `SettingsFormModel.stage()` calls `spec(field)`,
+which throws `plugin card has no field …` for anything outside the host's volatile
+set. So they are plain local state (`JevGateForm.local`), seeded from what the stored
+halves currently join back into and cleared on save and on discard.
+
+**A derived value never overwrites a hand-typed one.** The rule is *ownership*, not
+staleness: the panel may fill a field nobody owns and stops the moment the user edits
+that field themselves (`JevGateForm.touched`). "Reset to default" hands the field
+back to the derivation. On a panel-only input, reset additionally restores the two
+fields *to what they were* (`JevGateForm.derivedBefore`) rather than to the blank
+settings default, which would throw away a gateway the user had configured.
+
+The five derived rows carry `derived: true` and have `已由上面自动填好` / "Filled in
+automatically above" appended to their hint. `DEFAULT_DECIDER_BASE_URL` is a copy of
+the host's `DEFAULT_BASE_URL`; the contract check fails if either side moves alone.
 
 ## Secrets
 
@@ -88,8 +124,13 @@ An override may only ever *lower* force, never raise it:
 
 Two of them exist for the contract check rather than for the UI:
 
-- `FIELDS` — compared against the host schema's volatile field set.
+- `FIELDS` — compared against the host schema's volatile field set. It **excludes**
+  the panel-only inputs; the check asserts that too.
 - `DECISION_POINTS` — an id → default-ceiling map, compared against `host/catalog.ts`.
+- `DEFAULT_DECIDER_BASE_URL` — compared against `host/decider.ts`'s
+  `DEFAULT_BASE_URL`, which the host exports for exactly this purpose.
+- `FIELD_ROWS`, `PANEL_ONLY_FIELDS`, `DERIVED_FIELDS` — what `test:render` asserts the
+  rendered row order against.
 
 `SECRET_FIELDS` names the local-only secret inputs; they are deliberately absent
 from `FIELDS`.

@@ -83,6 +83,169 @@ window.__ModuleLoader__.load({
     /** Reference name the secret is stored under: the config field that carries it. */
     const REF_FIELD = 'deciderCredentialRef'
 
+    /**
+     * Panel-only input: the one endpoint URL, typed whole.
+     *
+     * It is **not** a settings field — the host has no such path, and adding one
+     * would make the panel the only way to configure that field. It is local state
+     * like `API_KEY_FIELD`, except it has nothing to write: it exists only to be
+     * split into `deciderBaseUrl` + `deciderEndpointPath`.
+     */
+    const ENDPOINT_URL_FIELD = 'endpointUrl'
+
+    /** Panel-only input: the one model route, typed as `provider/model`. */
+    const ROUTE_FIELD = 'modelRoute'
+
+    // ──────────────────────────────────────────────────── derived (auto-filled) fields
+    //
+    // Three fields on this page exist only as the *result* of something the user
+    // typed somewhere else, and asking for both halves means asking the same thing
+    // twice in two shapes and getting one of them wrong. Each derivation below turns
+    // one user-typed field into a value the host can store, and each result stays a
+    // **visible, editable** field: the panel never writes behind the user's back, and
+    // a hand-typed value is never overwritten (see `derive()`).
+    //
+    // Why the derivations live here and not in the host: the host is the thing being
+    // configured, and it must accept whatever is on disk without consulting a panel.
+
+    /**
+     * The host's documented default base URL for `deciderKind: 'endpoint'`.
+     *
+     * This is a **copy** of `DEFAULT_BASE_URL` in `host/decider.ts`. It cannot be an
+     * import — the browser module has no host import — so the two are pinned
+     * together by an assertion in `scripts/run-contract-check.mjs`, which reads the
+     * host source and fails if either side moves alone.
+     */
+    const DEFAULT_DECIDER_BASE_URL = 'https://api.typesafe.ai'
+
+    /**
+     * Split a full endpoint URL into the base and path the host stores separately.
+     *
+     * `host/decider.ts` reassembles these with `joinUrl()` on every call, so this
+     * must be its exact inverse or the panel will save a URL that goes somewhere
+     * else. The round trip is lossy only in ways `joinUrl()` cannot express anyway:
+     * a query string or fragment has nowhere to live in a base+path pair, so it is
+     * dropped from the path rather than smuggled into the base.
+     * @param {string} raw - what the user typed.
+     * @returns {{ base: string, path: string }} the two stored halves.
+     */
+    function splitEndpointUrl(raw) {
+      const trimmed = typeof raw === 'string' ? raw.trim() : ''
+      if (trimmed === '') return { base: '', path: '' }
+      // A bare host like "api.typesafe.ai" is what people actually type; accept it.
+      const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+      let parsed
+      try {
+        parsed = new URL(withScheme)
+      } catch (_error) {
+        return { base: '', path: '' }
+      }
+      // Credentials embedded in the URL are a paste accident, not configuration. They
+      // are dropped *structurally* rather than by clearing the parsed fields: both
+      // halves below are taken from `host` and `pathname`, neither of which carries
+      // userinfo, so `user:pw@` cannot reach the settings file even if this function
+      // is later edited to stop thinking about it.
+      const base = `${parsed.protocol}//${parsed.host}`
+      const path = `${parsed.pathname}${parsed.search}`
+      return { base, path }
+    }
+
+    /**
+     * Derive the credential reference name from the endpoint URL.
+     *
+     * The host only accepts `/^[A-Za-z_][A-Za-z0-9_]*$/`, which is why this exists at
+     * all: every natural thing a user might type — `https://api.typesafe.ai`,
+     * `api.typesafe.ai/v1`, `my key` — is rejected as a credential name. Deriving it
+     * from the host they are already pointing at gives every decider its own name,
+     * so two gateways in one profile do not overwrite each other's key.
+     * @param {string} baseUrl - the base URL field's current text.
+     * @returns {string} a legal reference name, or '' if none can be made.
+     */
+    function deriveCredentialRef(baseUrl) {
+      const trimmed = typeof baseUrl === 'string' ? baseUrl.trim() : ''
+      const source = trimmed === '' ? DEFAULT_DECIDER_BASE_URL : trimmed
+      let hostPart = ''
+      try {
+        hostPart = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(source) ? source : `https://${source}`).hostname
+      } catch (_error) {
+        return ''
+      }
+      // Hostname labels are already [A-Za-z0-9-]; join them with '_' so the whole
+      // thing is a legal identifier. A leading digit is the one case that can still
+      // come out illegal, so it is prefixed rather than rejected.
+      const name = hostPart.split('.').filter(Boolean).join('_')
+      if (name === '') return ''
+      return /^[A-Za-z_]/.test(name) ? name.toUpperCase() : `GATE_${name.toUpperCase()}`
+    }
+
+    /**
+     * The inverse of `splitEndpointUrl` on the stored halves — the URL to show.
+     *
+     * Mirrors `joinUrl()` in `host/decider.ts`, including its treatment of a blank
+     * path and of trailing slashes, so what this row displays is exactly what the
+     * host will request.
+     * @param {string} base - `deciderBaseUrl`'s text.
+     * @param {string} path - `deciderEndpointPath`'s text.
+     * @returns {string} the full URL.
+     */
+    function joinEndpointUrl(base, path) {
+      const trimmedBase = typeof base === 'string' ? base.trim().replace(/\/+$/, '') : ''
+      const trimmedPath = typeof path === 'string' ? path.trim() : ''
+      const effectiveBase = trimmedBase === '' ? DEFAULT_DECIDER_BASE_URL : trimmedBase
+      if (trimmedPath === '') return effectiveBase
+      return `${effectiveBase}${trimmedPath.startsWith('/') ? trimmedPath : `/${trimmedPath}`}`
+    }
+
+    /**
+     * Split a model route into the provider and model id the host stores separately.
+     *
+     * `host/decider.ts` never concatenates these back: the provider is an override
+     * that may be *absent* (blank means "follow the session's own route") and the
+     * model id is passed to the gateway on its own. So this is a plain split rather
+     * than a round trip, and a route with no slash is a model id with no override —
+     * which is exactly the shape the host already expects, so it must not be
+     * "helpfully" invented into `something/`.
+     * @param {string} raw - what the user typed, e.g. `openai/gpt-5`.
+     * @returns {{ provider: string, model: string }} the two stored halves.
+     */
+    function splitModelRoute(raw) {
+      const trimmed = typeof raw === 'string' ? raw.trim() : ''
+      if (trimmed === '') return { provider: '', model: '' }
+      const slash = trimmed.indexOf('/')
+      if (slash <= 0 || slash === trimmed.length - 1) return { provider: '', model: trimmed }
+      return { provider: trimmed.slice(0, slash), model: trimmed.slice(slash + 1) }
+    }
+
+    /** Read a staged/stored text field out of the model, tolerating a missing spec. */
+    function textOf(form, field) {
+      const view = form.field(field)
+      return view !== void 0 && typeof view.text === 'string' ? view.text.trim() : ''
+    }
+
+    /** The full endpoint URL the stored halves currently resolve to. */
+    function joinStoredUrl(form) {
+      return joinEndpointUrl(textOf(form, 'deciderBaseUrl'), textOf(form, 'deciderEndpointPath'))
+    }
+
+    /** The model route the stored halves currently resolve to. */
+    function joinStoredRoute(form) {
+      const provider = textOf(form, 'deciderProvider')
+      const model = textOf(form, 'deciderModel')
+      if (provider === '') return model
+      if (model === '') return provider
+      return `${provider}/${model}`
+    }
+
+    /**
+     * Which settings fields each panel-only input fills — the same list the row table
+     * declares, kept here so the controller can restore them on reset without
+     * importing the (rendering) row table.
+     */
+    const DERIVED_FROM = {
+      [ENDPOINT_URL_FIELD]: ['deciderBaseUrl', 'deciderEndpointPath'],
+      [ROUTE_FIELD]: ['deciderProvider', 'deciderModel'],
+    }
+
     // ─────────────────────────────────────────────────────────── dictionaries
 
     const en = {
@@ -132,6 +295,13 @@ window.__ModuleLoader__.load({
       deciderKind: 'Decider',
       deciderKindHint:
         'baseline (local, no network) / llm (the host model service — implemented here) / endpoint (a generic HTTP decider you point at).',
+      endpointUrl: 'Endpoint URL (kind=endpoint)',
+      endpointUrlHint:
+        'The whole address, typed once: for example https://gateway.example.com/v1/systemone. It is split into the base URL and endpoint path below, which you can still edit by hand. A scheme is optional; embedded user:password is dropped rather than written into the settings file.',
+      modelRoute: 'Model route (kind=llm)',
+      modelRouteHint:
+        'provider/model typed once, for example openai/gpt-5. Split into provider and model below, which you can still edit by hand. No slash means a model id with no provider override.',
+      autoFilled: 'Filled in automatically above; a value you type here is kept as-is.',
       deciderProvider: 'Provider (kind=llm)',
       deciderProviderHint: 'For kind=llm: provider override. Blank follows the session own route.',
       deciderModel: 'Model id',
@@ -220,6 +390,13 @@ window.__ModuleLoader__.load({
       deciderKind: '裁决器',
       deciderKindHint:
         'baseline（本地判定，不联网）/ llm（调用宿主自己的模型服务，本版本已实现）/ endpoint（你自己指定的通用 HTTP 裁决器）。',
+      endpointUrl: '接口地址（kind=endpoint）',
+      endpointUrlHint:
+        '一次填完整条地址，例如 https://gateway.example.com/v1/systemone。会拆成下面的基地址和接口路径，两格仍然可以手改。协议头可以不写；里面带的 user:password 会被丢掉，不写进设置文件。',
+      modelRoute: '模型路由（kind=llm）',
+      modelRouteHint:
+        '一次填成 provider/model，例如 openai/gpt-5。会拆成下面的提供方和模型，两格仍然可以手改。没有斜杠就当作只有模型 id、没有提供方覆盖。',
+      autoFilled: '已由上面自动填好；这里手输的值会原样保留。',
       deciderProvider: '提供方（kind=llm）',
       deciderProviderHint: 'kind=llm 时用：覆盖提供方。留空则跟会话自己的路由走。',
       deciderModel: '模型 id',
@@ -380,6 +557,13 @@ window.__ModuleLoader__.load({
      *
      * `label` and `hint` are dictionary keys, not display text — both dictionaries
      * must carry every one of them.
+     *
+     * `panelOnly: true` marks a row that is **not** a settings field: it is an input
+     * this panel owns, whose value exists only to be split into the settings fields
+     * below it. Such rows are rendered but excluded from `SPECS`/`FIELDS`, because
+     * the host has no path for them and staging one throws `plugin card has no
+     * field`. `derivedFrom` names the settings field the row fills, which is what
+     * makes the label above it read as the source of the two halves below.
      */
     const FIELD_ROWS = [
       { field: 'enabled', kind: BOOL_KIND, section: 'gate', label: 'enabled', hint: 'enabledHint' },
@@ -414,15 +598,38 @@ window.__ModuleLoader__.load({
       { field: 'narrativeWatch', kind: CHOICE_KIND, section: 'gate', label: 'narrativeWatch', hint: 'narrativeWatchHint' },
       { field: 'requireBaseline', kind: BOOL_KIND, section: 'gate', label: 'requireBaseline', hint: 'requireBaselineHint' },
       { field: 'deciderKind', kind: CHOICE_KIND, section: 'decider', label: 'deciderKind', hint: 'deciderKindHint' },
-      { field: 'deciderProvider', kind: TEXT_KIND, section: 'decider', label: 'deciderProvider', hint: 'deciderProviderHint' },
-      { field: 'deciderModel', kind: TEXT_KIND, section: 'decider', label: 'deciderModel', hint: 'deciderModelHint' },
-      { field: 'deciderBaseUrl', kind: TEXT_KIND, section: 'decider', label: 'deciderBaseUrl', hint: 'deciderBaseUrlHint' },
+      // ── panel-only inputs: typed once, split into the settings rows below them.
+      // They are positioned right after the kind selector because both of them are
+      // meaningless for the wrong kind (a URL for kind=llm, a route for
+      // kind=endpoint), and next to the selector is where that connection is made.
+      {
+        field: ENDPOINT_URL_FIELD,
+        kind: TEXT_KIND,
+        section: 'decider',
+        label: 'endpointUrl',
+        hint: 'endpointUrlHint',
+        panelOnly: true,
+        derivedFrom: ['deciderBaseUrl', 'deciderEndpointPath'],
+      },
+      {
+        field: ROUTE_FIELD,
+        kind: TEXT_KIND,
+        section: 'decider',
+        label: 'modelRoute',
+        hint: 'modelRouteHint',
+        panelOnly: true,
+        derivedFrom: ['deciderProvider', 'deciderModel'],
+      },
+      { field: 'deciderProvider', kind: TEXT_KIND, section: 'decider', label: 'deciderProvider', hint: 'deciderProviderHint', derived: true },
+      { field: 'deciderModel', kind: TEXT_KIND, section: 'decider', label: 'deciderModel', hint: 'deciderModelHint', derived: true },
+      { field: 'deciderBaseUrl', kind: TEXT_KIND, section: 'decider', label: 'deciderBaseUrl', hint: 'deciderBaseUrlHint', derived: true },
       {
         field: 'deciderEndpointPath',
         kind: TEXT_KIND,
         section: 'decider',
         label: 'deciderEndpointPath',
         hint: 'deciderEndpointPathHint',
+        derived: true,
       },
       {
         field: 'deciderCredentialRef',
@@ -430,6 +637,7 @@ window.__ModuleLoader__.load({
         section: 'decider',
         label: 'deciderCredentialRef',
         hint: 'deciderCredentialRefHint',
+        derived: true,
       },
       {
         field: 'deciderAuthority',
@@ -471,10 +679,16 @@ window.__ModuleLoader__.load({
      * invariant is computed from the host schema by `scripts/run-contract-check.mjs`,
      * so the two sides cannot drift apart silently.
      */
-    const SPECS = FIELD_ROWS.map(specFor)
+    const SPECS = FIELD_ROWS.filter((row) => row.panelOnly !== true).map(specFor)
 
-    /** Config field names, in declaration order (exposed for the contract check). */
-    const FIELDS = FIELD_ROWS.map((row) => row.field)
+    /**
+     * Config field names, in declaration order (exposed for the contract check).
+     *
+     * Panel-only rows are excluded: they are inputs this panel owns, not paths the
+     * host stores, so comparing them against `VOLATILE_FIELDS` would report two
+     * fields that can never be written.
+     */
+    const FIELDS = FIELD_ROWS.filter((row) => row.panelOnly !== true).map((row) => row.field)
 
     // ─────────────────────────────────────────────────────────────── controller
 
@@ -497,6 +711,36 @@ window.__ModuleLoader__.load({
           SPECS,
           [{ field: API_KEY_FIELD, write: (text) => this.writeKey(text) }],
         )
+        /**
+         * Fields the user has edited by hand since the panel last reset them.
+         *
+         * A derived value may fill an untouched field, but once a field is in here
+         * it belongs to the user and no derivation touches it again until they press
+         * "reset to default". See `derive()`.
+         */
+        this.touched = new Set()
+        /**
+         * Drafts for the two panel-only inputs.
+         *
+         * They cannot be staged in the model: `SettingsFormModel.stage()` calls
+         * `spec(field)`, which throws `plugin card has no field …` for anything
+         * outside the host's volatile set — and these two are not settings paths at
+         * all. So they are ordinary local state, cleared on discard and after a
+         * successful save (they are a view of what was just written).
+         */
+        this.local = new Map()
+        /**
+         * What the settings fields held before a panel-only draft overwrote them,
+         * keyed by field.
+         *
+         * It exists so that "reset to default" on a panel-only input can put the
+         * fields back to *what they were*, not to what the settings form considers
+         * their default: the default of `deciderBaseUrl` is blank, so a reset through
+         * `resetField` would throw away a gateway the user had already configured.
+         * It is cleared on discard, which is the one path where "undo" means "pretend
+         * this never happened".
+         */
+        this.derivedBefore = new Map()
         this.store = this.form.bind(() => this.projection())
         this.unsubscribe = scope.subscribe(() => {
           this.readCredential()
@@ -508,9 +752,26 @@ window.__ModuleLoader__.load({
       projection() {
         const state = { ...this.form.shell() }
         for (const row of FIELD_ROWS) {
+          if (row.panelOnly === true) continue
           state[row.field] = this.form.field(row.field)
         }
         state[API_KEY_FIELD] = this.form.field(API_KEY_FIELD)
+        // The two panel-only inputs are seeded from, never written to, the settings
+        // snapshot: they show what the stored halves *currently* join back into, so
+        // the user sees one URL and one route instead of two half-rows each. They are
+        // recomputed on every projection because the stored halves can change under
+        // the panel (another page wrote them), and a stale mirror would then show a
+        // URL that is no longer what would be called.
+        state[ENDPOINT_URL_FIELD] = {
+          text: this.local.get(ENDPOINT_URL_FIELD) ?? joinStoredUrl(this.form),
+          overridden: false,
+          invalid: false,
+        }
+        state[ROUTE_FIELD] = {
+          text: this.local.get(ROUTE_FIELD) ?? joinStoredRoute(this.form),
+          overridden: false,
+          invalid: false,
+        }
         state.apiKeyConfigured = this.credential.configured
         state.apiKeyWritable = this.credential.writable && this.refName() !== ''
         return state
@@ -573,20 +834,174 @@ window.__ModuleLoader__.load({
           hooks: { jevGate: this.store },
           ...actions,
           /**
-           * Editing the reference name changes which credential this panel talks
-           * about, so the "already has a key / no key yet" badge has to be re-read
-           * — otherwise a name that already holds a key keeps claiming it does not.
-           * The scope only publishes on *external* writes, so the draft edit is the
-           * only signal available here.
+           * One entry point for every field the card can edit.
+           *
+           * Three different destinations live behind it: the two panel-only inputs
+           * (local state), the secret input (the model's own secret spec, so it is
+           * staged and written on save like any other), and the ordinary settings
+           * fields. Routing them here rather than in the components is what keeps the
+           * derivations from missing a path.
+           *
+           * Editing the reference name additionally re-reads the credential, because
+           * the "already has a key / no key yet" badge describes the *name*: a name
+           * that already holds a key must stop claiming it does not, and the scope
+           * only publishes on external writes, so the draft edit is the only signal.
+           * @param {string} field - the field being edited.
+           * @param {string} text - its new text.
            */
           edit: (field, text) => {
-            actions.edit(field, text)
+            this.touched.add(field)
+            if (field === ENDPOINT_URL_FIELD || field === ROUTE_FIELD) {
+              // The values about to be split into are recorded *before* the draft
+              // exists, once per draft: that is what "reset" has to be able to put
+              // back. Deriving it later would capture the draft's own output.
+              if (!this.local.has(field)) this.rememberDerived(field)
+              this.local.set(field, typeof text === 'string' ? text : '')
+            } else {
+              actions.edit(field, text)
+            }
             if (field === REF_FIELD) this.readCredential()
+            this.derive(field)
+            this.publish()
           },
+          /**
+           * "Reset to default" on a panel-only input restores the view of what the
+           * stored halves join into, which is the only "default" such an input has;
+           * on a settings field it hands the field back to the derivation.
+           * @param {string} field - the field being reset.
+           */
           resetField: (field) => {
-            actions.resetField(field)
+            this.touched.delete(field)
+            if (field === ENDPOINT_URL_FIELD || field === ROUTE_FIELD) {
+              this.local.delete(field)
+              this.restoreDerived(field)
+            } else {
+              actions.resetField(field)
+            }
             if (field === REF_FIELD) this.readCredential()
+            this.derive(field)
+            this.publish()
           },
+          /** Discard drops the staged edits *and* the panel-only drafts. */
+          discard: () => {
+            this.touched.clear()
+            this.local.clear()
+            this.derivedBefore.clear()
+            actions.discard()
+          },
+          /**
+           * Save, then let go of the panel-only drafts.
+           *
+           * Their whole job was to split into the settings fields; once those are
+           * written, the drafts are stale copies of what the stored halves already
+           * join back into, and keeping them would freeze the two rows against the
+           * first URL the user ever typed — including after another page changes the
+           * stored value.
+           *
+           * The drafts are dropped *before* the write rather than after it, so this
+           * does not need to know how the save turned out — and nothing is lost on a
+           * failure either: `projection()` re-seeds each row from `form.field(...)`,
+           * which reads the staged draft first and the stored value second, so the
+           * row keeps showing exactly the text the model is still holding.
+           */
+          save: () => {
+            this.local.clear()
+            this.derivedBefore.clear()
+            actions.save()
+          },
+        }
+      }
+
+      /** Re-emit the projection after a local-only change. */
+      publish() {
+        this.store.set(this.projection())
+      }
+
+      /**
+       * Fill in the fields that exist only as the result of another field.
+       *
+       * **A derived value never overwrites a hand-typed one.** The rule is
+       * ownership, not staleness: the panel may fill a field while nobody owns it,
+       * and it stops as soon as the user edits that field themselves (`touched`).
+       * After that the user owns the text, even if it no longer matches what the
+       * derivation would produce — a gateway whose credential really is shared, or a
+       * provider that genuinely differs from the route, must stay reachable.
+       * @param {string} changed - the field the user just edited.
+       */
+      derive(changed) {
+        if (changed === ENDPOINT_URL_FIELD) {
+          const split = splitEndpointUrl(this.localText(ENDPOINT_URL_FIELD))
+          this.own('deciderBaseUrl', split.base)
+          this.own('deciderEndpointPath', split.path)
+          // The reference name follows the host being called, so that two gateways in
+          // one profile do not overwrite each other's key. It is derived from `split`
+          // rather than from the staged base field: the base field may have just been
+          // refused by `own()` (the user owns it), and in that case this derivation is
+          // skipped too — otherwise renaming the URL would move the key reference out
+          // from under a base the user is deliberately holding on to.
+          if (split.base !== '') this.own(REF_FIELD, deriveCredentialRef(split.base))
+        } else if (changed === ROUTE_FIELD) {
+          const route = splitModelRoute(this.localText(ROUTE_FIELD))
+          this.own('deciderProvider', route.provider)
+          this.own('deciderModel', route.model)
+        }
+      }
+
+      /**
+       * Write `value` into `field` unless the user has taken that field over.
+       * @param {string} field - the settings field to fill.
+       * @param {string} value - the derived text.
+       */
+      own(field, value) {
+        if (value === '' || this.touched.has(field)) return
+        if (this.form.field(field).text === value) return
+        this.form.actions().edit(field, value)
+      }
+
+      /**
+       * Record what the settings fields hold right now, so that resetting the
+       * panel-only input can put it back.
+       *
+       * Only the *first* value seen during one draft is kept: an edit that lands
+       * mid-draft is part of that same draft, and treating it as a new baseline
+       * would make "reset" walk backwards one keystroke instead of leaving the
+       * field where the user found it.
+       * @param {string} field - the panel-only input about to be typed into.
+       */
+      rememberDerived(field) {
+        for (const target of DERIVED_FROM[field]) {
+          if (this.derivedBefore.has(target)) continue
+          this.derivedBefore.set(target, this.form.field(target).text)
+        }
+      }
+
+      /** The current draft of a panel-only input. */
+      localText(field) {
+        const draft = this.local.get(field)
+        return draft !== undefined ? draft : ''
+      }
+
+      /**
+       * Put back the settings fields a panel-only draft overwrote.
+       *
+       * Restoring through `actions.resetField` would be wrong: that stages the field's
+       * *default* (blank, for `deciderBaseUrl`), which throws away a gateway the user
+       * had already pointed this plugin at. So the previous text is staged verbatim,
+       * and a field that had been blank is unset instead.
+       * @param {string} field - the panel-only input being reset.
+       */
+      restoreDerived(field) {
+        const targets = DERIVED_FROM[field]
+        if (targets === void 0) return
+        for (const target of targets) {
+          if (!this.derivedBefore.has(target)) continue
+          const previous = this.derivedBefore.get(target)
+          this.derivedBefore.delete(target)
+          if (previous === '') {
+            this.form.actions().resetField(target)
+          } else if (this.form.field(target).text !== previous) {
+            this.form.actions().edit(target, previous)
+          }
         }
       }
 
@@ -738,6 +1153,7 @@ window.__ModuleLoader__.load({
       const field = row.field
       const label = t(row.label)
       const hint = t(row.hint)
+      const rowHint = row.derived === true ? `${hint} ${t('autoFilled')}` : hint
       const overriddenLabel = t('overridden')
       const resetLabel = t('reset')
       const edit = (text) => props.edit(field, text)
@@ -749,7 +1165,7 @@ window.__ModuleLoader__.load({
           key: field,
           id: field,
           label,
-          hint,
+          hint: rowHint,
           overriddenLabel,
           resetLabel,
           disabled,
@@ -763,7 +1179,7 @@ window.__ModuleLoader__.load({
           key: field,
           id: field,
           label,
-          hint,
+          hint: rowHint,
           disabled,
           options: CHOICES[field].map((value) => ({ value, label: value })),
           overriddenLabel,
@@ -778,12 +1194,17 @@ window.__ModuleLoader__.load({
         key: field,
         id: field,
         label,
-        hint,
+        hint: rowHint,
         disabled,
         overriddenLabel,
         resetLabel,
         invalidLabel: t('invalidNumber'),
         ...value,
+        // A panel-only row's text is always a draft, never a stored override, so it
+        // must not borrow the stored field's "overridden" badge: the real settings
+        // fields below it are the ones that get marked. Set after the spread so it
+        // wins over the `overridden` that came in through it.
+        overridden: row.panelOnly === true ? false : current.overridden,
         onEdit: edit,
         onReset: reset,
       })
@@ -914,9 +1335,18 @@ window.__ModuleLoader__.load({
     exports.ROW_KEY = ROW_KEY
     exports.SLOT = 'plugins.row.config'
     exports.FIELDS = FIELDS
+    exports.FIELD_ROWS = FIELD_ROWS
+    exports.PANEL_ONLY_FIELDS = FIELD_ROWS.filter((row) => row.panelOnly === true).map((row) => row.field)
+    exports.DERIVED_FIELDS = FIELD_ROWS.filter((row) => row.derived === true).map((row) => row.field)
     exports.DECISION_POINTS = DECISION_POINTS
     exports.SECRET_FIELDS = [API_KEY_FIELD]
     exports.REF_FIELD = REF_FIELD
+    // Exported so `scripts/run-contract-check.mjs` can pin this copy to the host's
+    // `DEFAULT_BASE_URL` without parsing the text: a mention in a comment cannot
+    // satisfy the check, only this binding can.
+    exports.DEFAULT_DECIDER_BASE_URL = DEFAULT_DECIDER_BASE_URL
+    exports.ENDPOINT_URL_FIELD = ENDPOINT_URL_FIELD
+    exports.ROUTE_FIELD = ROUTE_FIELD
     exports.MODE_OPTIONS = MODE_OPTIONS
     exports.KIND_OPTIONS = KIND_OPTIONS
     exports.AUTHORITY_OPTIONS = AUTHORITY_OPTIONS
