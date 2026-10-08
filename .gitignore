@@ -1,5 +1,10 @@
 node_modules/
-lib/
+# Anchored on purpose. A bare `lib/` matches at **every** depth, which silently
+# swallowed `scripts/lib/` — the directory holding `bundle.mjs`, the helper every
+# gate script imports. A fresh clone then died at `import './lib/bundle.mjs'`.
+# `/lib/` is the tsc output tree: untracked by design, rebuilt by `prepare`, and
+# kept honest by `check:libsync`.
+/lib/
 .tmp/
 # The lib-freshness gate compiles into this tree. It has to sit one level below the
 # repository root (same depth as lib/) so tsc emits comparable sourcemap `sources`.
