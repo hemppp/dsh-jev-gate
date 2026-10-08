@@ -77,6 +77,58 @@ function jsx(type, props, key) {
 }
 const jsxs = jsx
 
+/**
+ * `react` 的最小等价：只有本插件真正用到的那一个 hook。
+ *
+ * `Disclosure` 用 `useState` 管自己的展开状态——那是**视图**决定，不进设置表单，
+ * 所以渲染测试必须能真的展开它，否则高级区永远是闭合的，而"默认收起"这件事
+ * 也就永远无法被断言。这里不模拟调度：`useState` 直接按调用序返回既定的初始值，
+ * 之后再取则返回调用方指定的下一个值，由测试逐个场景喂。
+ */
+let reactStateQueue = []
+let reactStateIndex = 0
+function useState(initial) {
+  const slot = reactStateQueue[reactStateIndex++]
+  const value = slot === undefined ? (typeof initial === 'function' ? initial() : initial) : slot
+  return [value, () => {}]
+}
+/**
+ * 让接下来一次渲染的 `useState` 从给定初值开始（按调用序逐个消费）。
+ *
+ * 只为断言"默认收起 / 展开后显示全部字段"服务：把 `[false]` 喂进去就得到默认
+ * 闭合的卡片，把 `[true]` 喂进去就得到展开的。
+ */
+function seedReactState(values) {
+  reactStateQueue = values.slice()
+  reactStateIndex = 0
+}
+function resetReactState() {
+  reactStateQueue = []
+  reactStateIndex = 0
+}
+
+/**
+ * 模型列表候选的宿主应答桩。
+ *
+ * `ctx.remote.llm.discoverModels(ns, request, signal)` 就是插件唯一的出网入口；
+ * 这里记录它被问了什么，好断言"问的是当前草稿的地址、密钥只在这一次调用里"。
+ */
+const modelPickerCalls = []
+let modelPickerAnswer = { ok: true, value: [] }
+function resetModelPickerState() {
+  modelPickerCalls.length = 0
+}
+const remoteLlm = {
+  discoverModels(ns, request, signal) {
+    modelPickerCalls.push({ ns, request, signal })
+    return Promise.resolve(
+      modelPickerAnswer.ok
+        ? modelPickerAnswer.value
+        : new Error(modelPickerAnswer.message ?? 'boom'),
+    )
+  },
+}
+
 /** primitives/index.js:3394 */
 function Switch({ checked, onChange, label, disabled = false, title, className }) {
   return jsx('button', {
@@ -628,7 +680,7 @@ function makeLocale() {
   }
 }
 
-function makeContext(scope, { form = 'scope' } = {}) {
+function makeContext(scope, { form = 'scope', llm = remoteLlm } = {}) {
   const localeService = makeLocale()
   const registered = []
   const credentialCalls = { describe: [], set: [] }
@@ -680,6 +732,7 @@ function makeContext(scope, { form = 'scope' } = {}) {
           if (typeof key === 'string' && key !== '') credentials.add(ref)
         },
       },
+      llm,
     },
     configForms: {
       get(ns) {
@@ -747,6 +800,7 @@ const moduleRecord = { exports: {} }
 const api = definition.factory(
   (id) => {
     if (id === 'react/jsx-runtime') return { Fragment, jsx, jsxs }
+    if (id === 'react') return { useState }
     if (id === '@deepseek-ai/dsh-client-ui-primitives') return primitives
     throw new Error(`渲染测试没有为 ${id} 提供模块`)
   },
@@ -782,6 +836,18 @@ function mountPanel(scope, options = {}) {
     resetField: injected.resetField,
     save: injected.save,
     discard: injected.discard,
+    discoverModels: injected.discoverModels,
+  }
+  /**
+   * `advancedOpen` 决定高级区初始是收是开。
+   *
+   * 每次渲染都把 `useState` 的初值重置成这个值，等价于「打开标签页看到的样子」——
+   * 而那正是"默认收起"要断言的语义：状态不进设置表单，也就不会被保存或回滚。
+   */
+  const draw = () => {
+    seedReactState([options.advancedOpen === true])
+    resetModelPickerState()
+    return resolveTree(jsx(entry.component, props))
   }
   return {
     ctx,
@@ -789,9 +855,10 @@ function mountPanel(scope, options = {}) {
     locale,
     props,
     entry,
+    injected,
     /** 每次调用都重新渲染：函数组件重新执行，snapshot 重新读。 */
-    render: () => resolveTree(jsx(entry.component, props)),
-    html: () => toHtml(resolveTree(jsx(entry.component, props))),
+    render: draw,
+    html: () => toHtml(draw()),
   }
 }
 
@@ -864,30 +931,74 @@ check(
 
 /* ================================================================== *
  * 7. 完整表单的结构
+ *
+ *    默认看到的是「基本区」：启用、模式、判定方式、一个接口地址、一个模型，
+ *    以及一个「获取模型列表」按钮。阈值、账本位置、逐点覆盖等一律收在
+ *    `Disclosure` 里，而它默认是收起的——所以这两组断言分开写：默认态证明
+ *    日常配置**用不到**高级字段，展开态证明它们**一个都没少**。
  * ================================================================== */
 
+// 展开态另挂一份：同一个 scope、同一批默认值，只是把高级区打开。
+const expandedPanel = mountPanel(probeScope, { advancedOpen: true })
 const form = panel.render()
+const full = expandedPanel.render()
 
 const headings = findByTag(form, 'h4').map((node) => textOf(node))
 check(
-  sameJson(headings, ['闸口', '外部裁决器', '规则覆盖']),
-  `三个分区标题应按 FIELD_ROWS 的 section 顺序出现，实际 ${JSON.stringify(headings)}`,
+  sameJson(headings, ['外部裁决器']),
+  `基本区只该有「外部裁决器」一个分区标题，实际 ${JSON.stringify(headings)}`,
+)
+// 「闸口」是这一页真正的起点：基本区开头就是它，高级区又从它的尾巴接上去，两边都不
+// 重复出标题。所以标题只有两个，而且展开后一共也只有这两个。
+check(
+  sameJson(findByTag(full, 'h4').map((node) => textOf(node)), ['外部裁决器', '规则覆盖']),
+  `高级区展开后应补上「规则覆盖」且不重复「闸口」，实际 ${JSON.stringify(findByTag(full, 'h4').map((node) => textOf(node)))}`,
 )
 
 const labels = findByTag(form, 'label').map((node) => node.props.htmlFor)
-// 面板自己的两个输入（endpointUrl / modelRoute）夹在 deciderKind 之后：它们不是设置
-// 字段，而是被拆进下面两格的来源，所以顺序里必须留在拆分结果之前。
-// 密钥框的 label 夹在 `deciderCredentialRef` 与 `deciderAuthority` 之间——面板就是把它
-// 插在引用名那一行后面的。这条断言顺带钉住了这个位置。
-const renderedLabels = api.FIELD_ROWS.map((row) => row.field)
-const refIndex = renderedLabels.indexOf(api.REF_FIELD)
+// 默认可见的四个输入，正是"该不该跑、跑多狠、去哪问、用哪个模型"。
 check(
-  sameJson(labels, [...renderedLabels.slice(0, refIndex + 1), api.SECRET_FIELDS[0], ...renderedLabels.slice(refIndex + 1)]),
-  `label 应按 FIELD_ROWS 顺序出现、密钥框紧随引用名，实际 ${JSON.stringify(labels)}`,
+  sameJson(labels, ['enabled', 'mode', 'deciderKind', 'endpointUrl']),
+  `默认态的 label 应只有启用/模式/判定方式/接口地址，实际 ${JSON.stringify(labels)}`,
+)
+// 模型不在 label 列表里：它被换成了「按钮 + 下拉」，而原始的 provider/model 文本
+// 框移到了高级区。所以默认态一个可手填的模型名都不给。
+check(
+  findById(form, 'modelRoute') === null,
+  '默认态不得出现可手填的 modelRoute 文本框（模型应从列表里选）',
 )
 check(
-  labels.length === api.FIELDS.length + api.PANEL_ONLY_FIELDS.length + api.SECRET_FIELDS.length,
-  `面板应有 ${api.FIELDS.length} 个配置字段 + ${api.PANEL_ONLY_FIELDS.length} 个面板输入 + ${api.SECRET_FIELDS.length} 个密钥框的 label，实际 ${labels.length}`,
+  findById(form, 'deciderBaseUrl') === null && findById(form, 'deciderProvider') === null,
+  '拆分出来的两个底层字段不应出现在默认态',
+)
+
+// 展开后一个都不能少：22 个设置字段 + 1 个面板输入（`endpointUrl`）+ 1 个密钥框。
+// `modelRoute` 是唯一例外——它在基本区被换成了「按钮 + 下拉」，所以没有自己的
+// label；原始的 provider/model 两个文本框仍在高级区里可手填。
+const fullLabels = findByTag(full, 'label').map((node) => node.props.htmlFor)
+const renderedLabels = [
+  // 基本区先来，然后才是高级区——两块各自保持 FIELD_ROWS 里的先后。
+  ...api.FIELD_ROWS.filter((row) => row.basic === true).map((row) => row.field),
+  ...api.FIELD_ROWS.filter((row) => row.basic !== true).map((row) => row.field),
+].filter((field) => field !== api.ROUTE_FIELD)
+const refIndex = renderedLabels.indexOf(api.REF_FIELD)
+const expectedExpanded = [...renderedLabels.slice(0, refIndex + 1), api.SECRET_FIELDS[0], ...renderedLabels.slice(refIndex + 1)]
+// 基本区那个密钥框是**条件渲染**：只有凭据引用名能写时才出现（空 ref 下密钥存不到任何
+// 名字下）。默认部署 ref 为空，所以展开态里只有高级区那一个——断言得接受"没有"和
+// "多一个、且那个紧跟在 endpointUrl 之后"，而不是硬编码某一种。
+const urlLabelAt = (labels) => labels.indexOf(api.ENDPOINT_URL_FIELD)
+const expectedWithBasicKey = (() => {
+  const at = urlLabelAt(expectedExpanded)
+  return [...expectedExpanded.slice(0, at + 1), api.SECRET_FIELDS[0], ...expectedExpanded.slice(at + 1)]
+})()
+check(
+  sameJson(fullLabels, expectedExpanded) || sameJson(fullLabels, expectedWithBasicKey),
+  `label 应按 FIELD_ROWS 顺序出现、密钥框紧随引用名，实际 ${JSON.stringify(fullLabels)}`,
+)
+const baseCount = api.FIELDS.length + 1 + api.SECRET_FIELDS.length
+check(
+  fullLabels.length === baseCount || fullLabels.length === baseCount + 1,
+  `面板应有 ${api.FIELDS.length} 个配置字段 + 1 个面板输入 + ${api.SECRET_FIELDS.length} 个密钥框的 label（凭据引用名为空时基本区那个不出现），实际 ${fullLabels.length}`,
 )
 // 面板私有输入不得混进 FIELDS：宿主没有这两条路径，写进去必被拒。
 check(
@@ -895,17 +1006,31 @@ check(
   `FIELDS 应仍是 22 个设置字段且面板输入另列，实际 FIELDS=${api.FIELDS.length} PANEL_ONLY=${JSON.stringify(api.PANEL_ONLY_FIELDS)}`,
 )
 check(
+  api.PANEL_ONLY_FIELDS.includes(api.ENDPOINT_URL_FIELD) && api.PANEL_ONLY_FIELDS.includes(api.ROUTE_FIELD),
+  '面板输入应恰好是接口地址与模型路由这两格',
+)
+check(
   sameJson(api.DERIVED_FIELDS, ['deciderProvider', 'deciderModel', 'deciderBaseUrl', 'deciderEndpointPath', 'deciderCredentialRef']),
   `被自动填的行应正好是五个派生字段，实际 ${JSON.stringify(api.DERIVED_FIELDS)}`,
 )
 
+/** 面板实际使用的翻译函数（测试桩默认中文），下面按字段取标签时要用同一个。 */
+const t = panel.locale.locale.bind(api.NS)
+const labelOf = (field) => {
+  const row = api.FIELD_ROWS.find((entry) => entry.field === field)
+  return row === undefined ? field : t(row.label)
+}
+
 for (const field of ['enabled', 'persistEnabled', 'interveneAtStateTransition', 'interveneAtPreFinish', 'requireBaseline']) {
-  const control = findByTag(form, 'button').filter((node) => node.props['aria-label'] === findById(form, field)?.props !== void 0)
-  void control
+  const label = labelOf(field)
+  const present = findAll(form, (node) => node.type === 'button' && node.props.role === 'switch')
+    .concat(findAll(full, (node) => node.type === 'button' && node.props.role === 'switch'))
+    .some((node) => node.props['aria-label'] === label)
+  check(present, `${field} 应渲染成一个开关（默认态或展开态），可访问名 ${label}`)
 }
 
 // 每个 bool 字段：label 之后必须是一个 role=switch 的按钮，其 aria-checked 等于默认值。
-const switches = findByTag(form, 'button').filter((node) => node.props.role === 'switch')
+const switches = findByTag(full, 'button').filter((node) => node.props.role === 'switch')
 check(switches.length === 5, `应有 5 个开关，实际 ${switches.length}`)
 check(
   sameJson(switches.map((node) => node.props['aria-checked']), [false, true, true, true, true]),
@@ -924,11 +1049,20 @@ check(
 )
 
 // 每个 choice 字段：<select> 的选项必须正好等于该字段的合法取值。
-const selects = findByTag(form, 'select')
-check(selects.length === 6, `应有 6 个下拉框，实际 ${selects.length}`)
+// 六个枚举下拉（外加模型选择器那一个，单独断言）。
+const selects = findByTag(full, 'select').filter((node) => node.props.id !== api.ROUTE_FIELD + '-picker')
+check(selects.length === 6, `应有 6 个枚举下拉框，实际 ${selects.length}`)
 check(
-  sameJson(selects.map((node) => node.props.id), ['mode', 'onUnavailable', 'roleAwareness', 'narrativeWatch', 'deciderKind', 'deciderAuthority']),
-  `下拉框 id 应覆盖 6 个枚举字段，实际 ${JSON.stringify(selects.map((node) => node.props.id))}`,
+  sameJson(findByTag(full, 'select').map((node) => node.props.id), [
+    'mode',
+    'deciderKind',
+    api.ROUTE_FIELD + '-picker',
+    'onUnavailable',
+    'roleAwareness',
+    'narrativeWatch',
+    'deciderAuthority',
+  ]),
+  `下拉框应是 6 个枚举字段加一个模型选择器，且模型选择器紧跟接口地址，实际 ${JSON.stringify(findByTag(full, 'select').map((node) => node.props.id))}`,
 )
 for (const [id, options] of [
   ['mode', api.MODE_OPTIONS],
@@ -938,31 +1072,31 @@ for (const [id, options] of [
   ['deciderKind', api.KIND_OPTIONS],
   ['deciderAuthority', api.AUTHORITY_OPTIONS],
 ]) {
-  const select = findById(form, id)
+  const select = findById(full, id)
   const rendered = findAll(select.children, (node) => node.type === 'option').map((node) => node.props.value)
   check(sameJson(rendered, [...options]), `${id} 的选项应等于 ${JSON.stringify(options)}，实际 ${JSON.stringify(rendered)}`)
   check(select.props.value === DEFAULTS[id], `${id} 的当前值应等于默认值 ${DEFAULTS[id]}`)
 }
 
 // 数字字段：numeric 只影响 inputMode，且必须真的落在四个数字字段上。
-const numeric = findByTag(form, 'input').filter((node) => node.props.inputMode === 'numeric')
+const numeric = findByTag(full, 'input').filter((node) => node.props.inputMode === 'numeric')
 check(
   sameJson(numeric.map((node) => node.props.id), ['minConfidence', 'maxGapsPerIntervention', 'debounceMs', 'deciderMaxQuestions']),
   `四个数字字段才该有 inputMode=numeric，实际 ${JSON.stringify(numeric.map((node) => node.props.id))}`,
 )
 for (const node of numeric) check(node.props.value === String(DEFAULTS[node.props.id]), `${node.props.id} 的初值应是 ${DEFAULTS[node.props.id]}`)
 
-// 文本输入框：13 个（4 个数字字段在原语里同样是 type="text"，靠 inputMode 区分；
-// 两个面板输入也是普通文本框）。
-const textInputs = findByTag(form, 'input').filter((node) => node.props.type === 'text')
+// 文本输入框：12 个（4 个数字字段在原语里同样是 type="text"，靠 inputMode 区分）。
+// `modelRoute` 不在其中——它在基本区被换成了下拉，只有 provider/model 两个底层字段
+// 留在高级区里可手填。
+const textInputs = findByTag(full, 'input').filter((node) => node.props.type === 'text')
 check(
   sameJson(textInputs.map((node) => node.props.id), [
+    'endpointUrl',
     'minConfidence',
     'maxGapsPerIntervention',
     'stateDir',
     'debounceMs',
-    'endpointUrl',
-    'modelRoute',
     'deciderProvider',
     'deciderModel',
     'deciderBaseUrl',
@@ -971,32 +1105,36 @@ check(
     'deciderMaxQuestions',
     'rulesJson',
   ]),
-  `文本输入框应有 13 个且顺序正确，实际 ${JSON.stringify(textInputs.map((node) => node.props.id))}`,
+  `文本输入框应有 12 个且顺序正确，实际 ${JSON.stringify(textInputs.map((node) => node.props.id))}`,
 )
-check(findById(form, 'stateDir').props.value === '.dsh-jev-gate', '账本目录初值应取默认值')
-check(findById(form, 'deciderEndpointPath').props.value === '/v1/systemone', '接口路径初值应取默认值')
+check(findById(full, 'stateDir').props.value === '.dsh-jev-gate', '账本目录初值应取默认值')
+check(findById(full, 'deciderEndpointPath').props.value === '/v1/systemone', '接口路径初值应取默认值')
 
 // 密钥框：紧跟在凭据引用名那一行之后，是 password，且 ref 为空时不可写。
-const secret = findById(form, api.SECRET_FIELDS[0])
+const secret = findById(full, api.SECRET_FIELDS[0])
 check(secret !== null, '必须渲染密钥输入框')
 check(secret.props.type === 'password', '密钥框必须是 type=password')
 check(secret.props.autoComplete === 'new-password', '密钥框应劝浏览器别拿登录密码来填')
 check(secret.props.disabled === true, '凭据引用名为空时密钥框必须不可写（否则密钥存不到任何名字下）')
 // 提示文字是密钥框所在 div 里的 p（`SettingsSecretField` 自己的 hint），不是包着它的
 // fieldRow 段落——所以按「input 的父节点」取，而不是在整棵树里搜。
-const secretField = findAll(form, (node) => node.type === 'div').filter((node) => findById(node, api.SECRET_FIELDS[0]) !== null)[0]
-const secretParagraphs = findByTag(secretField, 'p').map((node) => textOf(node))
+// 提示文字是 SettingsSecretField 自己的 hint（div 里的 p），不是包着它的 fieldRow
+// 段落。基本区和高级区各有一个密钥框（同一份字段），所以按"含该 id 的 div"全收，
+// 再断言**其中至少一个**解释了 ref 为空时为什么不能写。
+const secretParagraphs = findAll(full, (node) => node.type === 'div')
+  .filter((node) => findById(node, api.SECRET_FIELDS[0]) !== null)
+  .flatMap((node) => findByTag(node, 'p').map((p) => textOf(p)))
 check(
   secretParagraphs.some((line) => line.includes('请先在上面填凭据引用名')),
   `ref 为空时密钥框的提示必须说明要先填引用名，实际 ${JSON.stringify(secretParagraphs)}`,
 )
 check(
-  treeText(form).includes('这个引用名下还没有密钥。'),
+  treeText(full).includes('这个引用名下还没有密钥。'),
   '未配置密钥时应显示「还没有密钥」',
 )
 
 // 决策点参照表：14 条，只读。
-const listItems = findByTag(form, 'li')
+const listItems = findByTag(full, 'li')
 check(listItems.length === 14, `决策点参照表应有 14 条，实际 ${listItems.length}`)
 const listedPoints = listItems.map((node) => textOf(findByTag(node, 'code')[0] ?? node))
 check(
@@ -1005,20 +1143,24 @@ check(
 )
 
 // 保存按钮：没改过任何东西时必须不可点。
-const saveButtons = findByTag(form, 'button').filter((node) => node.props.className === 'save')
+const saveButtons = findByTag(full, 'button').filter((node) => node.props.className === 'save')
 check(saveButtons.length === 1, '应恰好有一个保存按钮')
 check(saveButtons[0].props.disabled === true, '没有改动时保存按钮必须禁用')
 check(saveButtons[0].props.children === '保存', `保存按钮文案应为「保存」，实际 ${JSON.stringify(saveButtons[0].props.children)}`)
-check(treeText(form).includes('本部署没有接受这些值') === false, '还没保存过就不该出现「保存失败」')
+check(treeText(full).includes('本部署没有接受这些值') === false, '还没保存过就不该出现「保存失败」')
 
 // 抽样：HTML 序列化必须是确定的、结构正确的。
 {
   const html = panel.html()
+  const fullHtml = expandedPanel.html()
   check(html.startsWith('<div class="form">'), '表单根应是 SettingsForm 的 div')
   check(html.includes('<button type="button" role="switch" aria-checked="false"'), 'HTML 里开关应带上 role 与 aria-checked')
-  check(html.includes('>闸口</h4>'), 'HTML 里应能看出分区标题')
-check(html.includes('role="switch"'), '开关的可访问性角色必须落到 HTML 上')
-check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML 里不得出现 undefined 或 [object Object]')
+  check(html.includes('>外部裁决器</h4>'), '默认 HTML 里应能看出分区标题')
+  // 「规则覆盖」只在高级区里，所以只该在展开后的 HTML 里出现。
+  check(!html.includes('>规则覆盖</h4>'), '默认 HTML 不得泄漏高级区的分区标题')
+  check(fullHtml.includes('>规则覆盖</h4>'), '展开后的 HTML 应包含高级区的分区标题')
+  check(html.includes('role="switch"'), '开关的可访问性角色必须落到 HTML 上')
+  check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML 里不得出现 undefined 或 [object Object]')
   check(panel.html() === html, '同一状态两次渲染必须逐字节相同')
 }
 
@@ -1077,7 +1219,8 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
 
 {
   const scope = makeScope({ base: DEFAULTS })
-  const numericPanel = mountPanel(scope)
+  // `minConfidence` lives in the advanced area, so this panel needs it open.
+  const numericPanel = mountPanel(scope, { advancedOpen: true })
   let tree = numericPanel.render()
 
   findById(tree, 'minConfidence').props.onChange({ target: { value: 'abc' } })
@@ -1117,7 +1260,8 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
 
 {
   const scope = makeScope({ base: DEFAULTS })
-  const textPanel = mountPanel(scope)
+  // `stateDir` and the save button both live behind the disclosure.
+  const textPanel = mountPanel(scope, { advancedOpen: true })
   let tree = textPanel.render()
   findById(tree, 'stateDir').props.onChange({ target: { value: '  ledger/  ' } })
   await textPanel.props.save()
@@ -1129,7 +1273,7 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
 
   // 宿主拒收：failed 置位，草稿保留，保存按钮仍可点。
   const failing = makeScope({ base: DEFAULTS, mutateFails: true })
-  const failingPanel = mountPanel(failing)
+  const failingPanel = mountPanel(failing, { advancedOpen: true })
   tree = failingPanel.render()
   findById(tree, 'mode').props.onChange({ target: { value: 'lockdown' } })
   await failingPanel.props.save()
@@ -1153,7 +1297,7 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
 
 {
   const scope = makeScope({ base: DEFAULTS })
-  const secretPanel = mountPanel(scope)
+  const secretPanel = mountPanel(scope, { advancedOpen: true })
   let tree = secretPanel.render()
 
   check(findById(tree, api.SECRET_FIELDS[0]).props.disabled === true, '没有引用名时密钥框不可写')
@@ -1210,7 +1354,7 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
   // 把引用名清空却带着密钥草稿去保存：writeKey 返回 false，保存必须如实报失败，
   // 而不是「显示成功但密钥丢了」。
   const scope = makeScope({ base: DEFAULTS, user: { deciderCredentialRef: 'OLD_KEY' } })
-  const orphanPanel = mountPanel(scope)
+  const orphanPanel = mountPanel(scope, { advancedOpen: true })
   let tree = orphanPanel.render()
   check(findById(tree, api.SECRET_FIELDS[0]).props.disabled === false, '已有引用名时密钥框可写')
 
@@ -1271,20 +1415,24 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
 
 /* ================================================================== *
  * 14. 自动拼接：一次填写 → 拆进设置字段 → 可见可改
+ *
+ *     `endpointUrl` 是唯一保留"填一次"的输入——它把基地址与接口路径拆成两格，
+ *     并按 host 派生出凭据引用名。模型那边不再有 `modelRoute` 文本框：基本区是
+ *     下拉，高级区是 provider/model 两格各自可写。
  * ================================================================== */
 
 {
   const scope = makeScope({ base: DEFAULTS })
-  const derived = mountPanel(scope)
+  // `deciderEndpointPath` and the derived writes live behind the disclosure.
+  const derived = mountPanel(scope, { advancedOpen: true })
   let tree = derived.render()
 
-  // 未动过时，两个面板输入显示的是「已存两半拼回的样子」：初值 base 留空 + path
+  // 未动过时，面板输入显示的是「已存两半拼回的样子」：初值 base 留空 + path
   // 有默认值，所以 URL 行应当显示默认基地址 + 默认路径，而不是空的。
   check(
     findById(tree, 'endpointUrl').props.value === 'https://api.typesafe.ai/v1/systemone',
     `接口地址行初值应是已存两半拼回的样子，实际 ${JSON.stringify(findById(tree, 'endpointUrl').props.value)}`,
   )
-  check(findById(tree, 'modelRoute').props.value === '', '提供方与模型都为空时路由行应为空')
   check(findById(tree, 'deciderBaseUrl').props.value === '', '默认基地址不该出现在 baseUrl 字段里')
 
   // 填一次完整地址 → 拆进两格；引用名按 host 自动生成。
@@ -1302,19 +1450,22 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
   check(findById(tree, 'deciderBaseUrl').props.value === 'https://api.example.org', '无协议头应补上 https，且不得带出 user:password')
   check(findById(tree, 'deciderEndpointPath').props.value === '/v2?x=1', '查询串应跟着路径走')
 
-  // 填一次路由 → 拆成提供方与模型。
-  findById(tree, 'modelRoute').props.onChange({ target: { value: 'openai/gpt-5' } })
+  // 模型：基本区给下拉，高级区给两格原始字段。下拉选中即写 `deciderModel`。
+  const picker = findById(tree, api.ROUTE_FIELD + '-picker')
+  check(picker !== null, '基本区应有一个模型下拉')
+  check(picker.props.disabled === true, '还没取到候选时下拉应禁用')
+  picker.props.onChange({ target: { value: 'gpt-5' } })
   tree = derived.render()
-  check(findById(tree, 'deciderProvider').props.value === 'openai', '路由应拆出提供方')
-  check(findById(tree, 'deciderModel').props.value === 'gpt-5', '路由应拆出模型 id')
+  check(findById(tree, 'deciderModel').props.value === 'gpt-5', '选中模型应写进 deciderModel')
+  check(findById(tree, 'deciderProvider').props.value === '', '只有一个 id 时不应凭空编出提供方')
 
   // 拆出来的值必须真的进设置（进 ops），而不只是显示在面板上。
   await derived.props.save()
   await flush()
   const savedPaths = scope.log.mutates.flatMap((call) => call.ops.map((op) => op.path.join('.'))).sort()
   check(
-    sameJson(savedPaths, ['deciderBaseUrl', 'deciderCredentialRef', 'deciderEndpointPath', 'deciderModel', 'deciderProvider']),
-    `自动填的五个字段都应提交进设置，实际 ${JSON.stringify(savedPaths)}`,
+    sameJson(savedPaths, ['deciderBaseUrl', 'deciderCredentialRef', 'deciderEndpointPath', 'deciderModel']),
+    `自动填的字段都应提交进设置（只有 id 的模型不编提供方），实际 ${JSON.stringify(savedPaths)}`,
   )
 
   // 保存后面板输入必须交回给存储：草稿若留着，两行会被钉死在用户第一次敲的地址上，
@@ -1325,15 +1476,15 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
     `保存后接口地址行应由已存两半重新拼出，实际 ${JSON.stringify(findById(tree, 'endpointUrl').props.value)}`,
   )
 
-  // 「派生值永不覆盖手输值」：用户手改过 deciderProvider 之后，再动 URL/路由，
+  // 「派生值永不覆盖手输值」：用户手改过 deciderProvider 之后，再动模型下拉，
   // 那个手输的提供方必须原样留着。
   tree = derived.render()
   findById(tree, 'deciderProvider').props.onChange({ target: { value: 'anthropic' } })
   tree = derived.render()
-  findById(tree, 'modelRoute').props.onChange({ target: { value: 'mistral/large' } })
+  findById(tree, api.ROUTE_FIELD + '-picker').props.onChange({ target: { value: 'large' } })
   tree = derived.render()
   check(findById(tree, 'deciderProvider').props.value === 'anthropic', '手输过的字段不得被自动填覆盖')
-  check(findById(tree, 'deciderModel').props.value === 'large', '没手输过的那半仍应跟着路由走')
+  check(findById(tree, 'deciderModel').props.value === 'large', '没手输过的那半仍应跟着所选模型走')
   check(findById(tree, 'deciderBaseUrl').props.value === 'https://api.example.org', '换一个手输字段不应影响另一条派生链')
 
   // 手输的值要能存下去（这条守护的是 own() 的 touched 判断，而不是显示层）。
@@ -1363,10 +1514,14 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
   )
 
   // discard 同时丢掉面板输入的草稿：这条是唯一保证「撤销」是真撤销的地方。
-  findById(tree, 'modelRoute').props.onChange({ target: { value: 'zzz/leftover' } })
+  // 模型没有文本框了，所以这里改接口地址那一行——同样是"面板自己拥有的那格"。
+  findById(tree, 'endpointUrl').props.onChange({ target: { value: 'https://leftover.example/zzz' } })
   derived.props.discard()
   tree = derived.render()
-  check(findById(tree, 'modelRoute').props.value === 'anthropic/large', `discard 后面板草稿应被丢掉，实际 ${JSON.stringify(findById(tree, 'modelRoute').props.value)}`)
+  check(
+    findById(tree, 'endpointUrl').props.value === 'https://api.example.org/v2?x=1',
+    `discard 后面板草稿应被丢掉，实际 ${JSON.stringify(findById(tree, 'endpointUrl').props.value)}`,
+  )
 
   // 派生字段的提示语要说明它是自动填的、且手输会被保留。
   check(treeText(tree).includes('已由上面自动填好'), '派生字段的提示应说明它由上面自动填好')
@@ -1383,11 +1538,11 @@ check(!html.includes('undefined') && !html.includes('[object Object]'), 'HTML �
 
 {
   const scope = makeScope({ base: DEFAULTS })
-  const localized = mountPanel(scope)
+  const localized = mountPanel(scope, { advancedOpen: true })
   localized.locale.setLocale('en')
   const tree = localized.render()
   const headings = findByTag(tree, 'h4').map((node) => textOf(node))
-  check(sameJson(headings, ['Gate', 'External decider', 'Rule overrides']), `切到 en 后分区标题应变英文，实际 ${JSON.stringify(headings)}`)
+  check(sameJson(headings, ['External decider', 'Rule overrides']), `切到 en 后分区标题应变英文，实际 ${JSON.stringify(headings)}`)
   check(findByTag(tree, 'button').filter((node) => node.props.className === 'save')[0].props.children === 'Save', '切到 en 后保存按钮应为 Save')
   const points = findByTag(tree, 'li')[0]
   check(textOf(points).includes('default ceiling'), '切到 en 后决策点表的列名应变英文')

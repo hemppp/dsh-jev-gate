@@ -45,6 +45,7 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 
 import { bindingForCall, isTeamToolName, pointForCall } from './catalog.ts'
 import { Config, toRuntimeConfig, allowsBlocking, type RuntimeConfig } from './config.ts'
+import { discoverModels, type DiscoveryRequest } from './discovery.ts'
 import { decisionKindFor } from './intervene.ts'
 import { isActionableClaim, NarrativeWatch } from './narrative.ts'
 import { Roster, workspaceFor } from './roster.ts'
@@ -82,6 +83,40 @@ export function apply(ctx: Context, config: Config): void {
   const runtime: RuntimeConfig = toRuntimeConfig(config)
   const info = (message: string): void => ctx.logger.info(message)
   const warn = (message: string): void => ctx.logger.warn(message)
+
+  /**
+   * 让设置页能「填一个地址就把模型列出来」。
+   *
+   * 注册在两个早退**之前**：`enabled: false` 的部署（插件在场但不干预）照样要能
+   * 在设置页里配好接口，那正是刚装上的人第一次打开这张卡片的时刻。这不是干预，
+   * 只是回答「这个地址上有哪些模型」。
+   *
+   * 用 `ctx.inject(['llm'], …)` 而不是把它塞进 `export const inject`：宿主 `llm`
+   * 服务缺失时插件本身仍然该能装上、只是设置页退回手填模型 id，而不是整个插件
+   * 加载失败。
+   */
+  ctx.inject(['llm'], (llmCtx) => {
+    llmCtx.effect(() => {
+      const llm = llmCtx.get('llm') as {
+        registerModelDiscovery?: (
+          settingsNs: string,
+          discover: (
+            request: DiscoveryRequest,
+            signal?: AbortSignal,
+          ) => Promise<readonly { id: string; name: string; contextWindow?: number; maxTokens?: number }[]>,
+        ) => () => void
+      }
+      if (llm === undefined || typeof llm.registerModelDiscovery !== 'function') {
+        warn('dsh-jev-gate: llm.registerModelDiscovery() 不可用，设置页退回手填模型 id。')
+        return () => {}
+      }
+      return llm.registerModelDiscovery('dsh-jev-gate', (request, signal) =>
+        // 端点是使用者自己敲进来的地址，出网的是宿主进程而不是浏览器：既绕开
+        // CORS，也让这次一次性密钥从表单到请求头只存在这一次调用里。
+        discoverModels(request, signal, (url, init) => fetch(url, init)),
+      )
+    }, 'dsh-jev-gate: model discovery')
+  })
 
   // 默认是「装好了但什么都不做」：`enabled` 默认 false，`mode` 默认 dry-run。
   // 两个开关只要有一个说停就停——`enabled: false` 却仍在记账会让人以为插件关着，

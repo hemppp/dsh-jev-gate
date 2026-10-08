@@ -210,9 +210,10 @@ const api = produced ?? moduleRecord.exports
 check(typeof api === 'object' && api !== null, 'factory 必须返回 exports 对象')
 check(typeof api.apply === 'function', 'exports.apply 必须是函数')
 check(Array.isArray(api.inject), 'exports.inject 必须是服务名数组')
-// inject 就是发布出去的依赖清单；与源码逐项比对（五个名字，含子服务 remote.credentials）。
+// inject 就是发布出去的依赖清单；与源码逐项比对（六个名字，含子服务
+// remote.credentials 与 remote.llm——后者是模型列表的宿主桥）。
 check(
-  sameJson(api.inject, ['slots', 'locale', 'remote', 'remote.credentials', 'configForms']),
+  sameJson(api.inject, ['slots', 'locale', 'remote', 'remote.credentials', 'remote.llm', 'configForms']),
   `inject 服务清单不符：${JSON.stringify(api.inject)}`,
 )
 // 槽位/命名空间常量：宿主与客户端必须共用同一批字符串。

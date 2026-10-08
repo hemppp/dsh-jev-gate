@@ -61,6 +61,7 @@ window.__ModuleLoader__.load({
     var exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
 
+    let react = require('react')
     let react_jsx_runtime = require('react/jsx-runtime')
     let primitives = require('@deepseek-ai/dsh-client-ui-primitives')
 
@@ -369,6 +370,12 @@ window.__ModuleLoader__.load({
       saving: 'Saving…',
       saveFailed: 'The deployment did not accept these values; they were left for you to correct.',
       invalidNumber: 'Enter a number, or leave blank to use the default.',
+
+      advanced: 'Advanced settings',
+      advancedHint: 'Thresholds, ledger location, per-decision-point overrides. Collapsed by default.',
+      modelsFetch: 'Fetch model list',
+      modelsLoading: 'Fetching…',
+      modelsNone: '(no models available yet)',
     }
 
     const zh = {
@@ -463,6 +470,12 @@ window.__ModuleLoader__.load({
       saving: '保存中…',
       saveFailed: '本部署没有接受这些值，已保留供你修改。',
       invalidNumber: '请填数字；留空表示使用默认值。',
+
+      advanced: '高级设置',
+      advancedHint: '阈值、账本位置、逐决策点覆盖等。默认收起。',
+      modelsFetch: '获取模型列表',
+      modelsLoading: '正在获取…',
+      modelsNone: '（还没有可用模型）',
     }
 
     function formLabels(t) {
@@ -590,8 +603,8 @@ window.__ModuleLoader__.load({
      * makes the label above it read as the source of the two halves below.
      */
     const FIELD_ROWS = [
-      { field: 'enabled', kind: BOOL_KIND, section: 'gate', label: 'enabled', hint: 'enabledHint' },
-      { field: 'mode', kind: CHOICE_KIND, section: 'gate', label: 'mode', hint: 'modeHint' },
+      { field: 'enabled', kind: BOOL_KIND, section: 'gate', label: 'enabled', hint: 'enabledHint', basic: true },
+      { field: 'mode', kind: CHOICE_KIND, section: 'gate', label: 'mode', hint: 'modeHint', basic: true },
       { field: 'onUnavailable', kind: CHOICE_KIND, section: 'gate', label: 'onUnavailable', hint: 'onUnavailableHint' },
       { field: 'minConfidence', kind: NUMBER_KIND, section: 'gate', label: 'minConfidence', hint: 'minConfidenceHint' },
       {
@@ -621,7 +634,7 @@ window.__ModuleLoader__.load({
       { field: 'roleAwareness', kind: CHOICE_KIND, section: 'gate', label: 'roleAwareness', hint: 'roleAwarenessHint' },
       { field: 'narrativeWatch', kind: CHOICE_KIND, section: 'gate', label: 'narrativeWatch', hint: 'narrativeWatchHint' },
       { field: 'requireBaseline', kind: BOOL_KIND, section: 'gate', label: 'requireBaseline', hint: 'requireBaselineHint' },
-      { field: 'deciderKind', kind: CHOICE_KIND, section: 'decider', label: 'deciderKind', hint: 'deciderKindHint' },
+      { field: 'deciderKind', kind: CHOICE_KIND, section: 'decider', label: 'deciderKind', hint: 'deciderKindHint', basic: true },
       // ── panel-only inputs: typed once, split into the settings rows below them.
       // They are positioned right after the kind selector because both of them are
       // meaningless for the wrong kind (a URL for kind=llm, a route for
@@ -633,6 +646,7 @@ window.__ModuleLoader__.load({
         label: 'endpointUrl',
         hint: 'endpointUrlHint',
         panelOnly: true,
+        basic: true,
         derivedFrom: ['deciderBaseUrl', 'deciderEndpointPath'],
       },
       {
@@ -642,6 +656,7 @@ window.__ModuleLoader__.load({
         label: 'modelRoute',
         hint: 'modelRouteHint',
         panelOnly: true,
+        basic: true,
         derivedFrom: ['deciderProvider', 'deciderModel'],
       },
       { field: 'deciderProvider', kind: TEXT_KIND, section: 'decider', label: 'deciderProvider', hint: 'deciderProviderHint', derived: true },
@@ -714,6 +729,25 @@ window.__ModuleLoader__.load({
      */
     const FIELDS = FIELD_ROWS.filter((row) => row.panelOnly !== true).map((row) => row.field)
 
+    /**
+     * The rows the page shows before anything is expanded.
+     *
+     * Configuring this plugin used to mean reading twenty-two fields to learn that
+     * four of them are two values split in half. So the **basic** rows are the ones
+     * that answer "should this thing run, how hard, and where does it ask" — enable,
+     * mode, decider kind, one endpoint URL, one model — and everything else (thresholds,
+     * ceilings, storage paths, rule overrides) is still fully editable behind one
+     * disclosure rather than deleted.
+     *
+     * Nothing is dropped: a knob the panel could not reach would be a knob nobody
+     * could turn, and `SPECS`/`FIELDS` are checked against the host's volatile set.
+     *
+     * The advanced area starts **closed** and the user opens it, because the common
+     * case — turn it on, point it at an API, pick a model — needs none of it.
+     */
+    const BASIC_ROWS = FIELD_ROWS.filter((row) => row.basic === true)
+    const ADVANCED_ROWS = FIELD_ROWS.filter((row) => row.basic !== true)
+
     // ─────────────────────────────────────────────────────────────── controller
 
     /**
@@ -765,6 +799,17 @@ window.__ModuleLoader__.load({
          * this never happened".
          */
         this.derivedBefore = new Map()
+        /**
+         * Model discovery: what `discoverModels` last answered, and the in-flight
+         * request that would replace it.
+         *
+         * This is **local** state for the same reason `local` is: the candidate list
+         * describes an address the user has typed but not yet saved, so it has no
+         * settings path and nothing to persist. Losing it on a discard is correct —
+         * the address it described is gone too.
+         */
+        this.models = { status: 'idle', list: [], error: '', forUrl: '' }
+        this.pendingModels = null
         this.store = this.form.bind(() => this.projection())
         this.unsubscribe = scope.subscribe(() => {
           this.readCredential()
@@ -798,6 +843,7 @@ window.__ModuleLoader__.load({
         }
         state.apiKeyConfigured = this.credential.configured
         state.apiKeyWritable = this.credential.writable && this.refName() !== ''
+        state.models = this.models
         return state
       }
 
@@ -849,6 +895,87 @@ window.__ModuleLoader__.load({
         await this.ctx.remote.credentials.set(ref, value)
         await this.readCredential()
         return this.credential.configured
+      }
+
+      /**
+       * The base URL to interrogate: what the endpoint row currently reads as.
+       *
+       * The draft wins over the stored value so that asking for models **before**
+       * saving still interrogates the address the user just typed — asking about the
+       * old one would answer a question nobody asked.
+       * @returns the OpenAI-compatible base, or an empty string when unset.
+       */
+      discoveryBase() {
+        return splitEndpointUrl(this.localText(ENDPOINT_URL_FIELD)).base
+      }
+
+      /**
+       * Ask the host which models the current address advertises.
+       *
+       * The request goes to the host rather than to the endpoint from the browser:
+       * an arbitrary user-supplied origin would be refused by CORS, and the key would
+       * then have to live in the page. Here it exists for the duration of one call —
+       * the form's staged key is passed straight through and stored nowhere.
+       *
+       * A second request supersedes the first: an in-flight one is abandoned, and its
+       * late answer is dropped rather than overwriting the newer list.
+       */
+      async discoverModels() {
+        if (this.pendingModels !== null) this.pendingModels.abort()
+        const controller = new AbortController()
+        this.pendingModels = controller
+        const baseURL = this.discoveryBase()
+        this.models = { status: 'loading', list: [], error: '', forUrl: baseURL }
+        this.publish()
+
+        const remote = this.ctx.remote
+        if (remote === undefined || typeof remote.llm?.discoverModels !== 'function') {
+          this.models = {
+            status: 'error',
+            list: [],
+            error: '宿主没有提供模型列表服务，请手填模型 id。',
+            forUrl: baseURL,
+          }
+          this.publish()
+          return
+        }
+
+        try {
+          const answer = await remote.llm.discoverModels(
+            ENTRY_NS,
+            {
+              ...(baseURL === '' ? {} : { baseURL }),
+              // The staged key, not the stored one: an unsaved key is exactly the one
+              // the user is testing, and the stored credential may still be the old
+              // gateway's.
+              ...(this.form.field(API_KEY_FIELD).text === ''
+                ? {}
+                : { apiKey: this.form.field(API_KEY_FIELD).text }),
+            },
+            controller.signal,
+          )
+          if (this.pendingModels !== controller) return
+          const list = Array.isArray(answer) ? answer : []
+          this.models = { status: 'done', list, error: '', forUrl: baseURL }
+        } catch (error) {
+          if (this.pendingModels !== controller) return
+          this.models = {
+            status: 'error',
+            list: [],
+            error: error instanceof Error && error.message !== '' ? error.message : String(error),
+            forUrl: baseURL,
+          }
+        } finally {
+          if (this.pendingModels === controller) this.pendingModels = null
+          this.publish()
+        }
+      }
+
+      /** Drop any in-flight discovery, so a torn-down card stops the host waiting. */
+      cancelDiscovery() {
+        if (this.pendingModels === null) return
+        this.pendingModels.abort()
+        this.pendingModels = null
       }
 
       /** Props the slot entry injects into the component. */
@@ -911,8 +1038,20 @@ window.__ModuleLoader__.load({
             this.touched.clear()
             this.local.clear()
             this.derivedBefore.clear()
+            // The candidate list described an address that no longer exists, so it
+            // goes with it rather than dangling under the next one.
+            this.cancelDiscovery()
+            this.models = { status: 'idle', list: [], error: '', forUrl: '' }
             actions.discard()
           },
+          /**
+           * Ask the host for the models this address advertises.
+           *
+           * Bound here rather than in the component so the button has no way to reach
+           * the form internals — the controller owns both the draft the request reads
+           * and the request's lifetime.
+           */
+          discoverModels: () => this.discoverModels(),
           /**
            * Save, then let go of the panel-only drafts.
            *
@@ -931,6 +1070,9 @@ window.__ModuleLoader__.load({
           save: () => {
             this.local.clear()
             this.derivedBefore.clear()
+            // Keep the candidates: they describe the address just saved, and a saved
+            // route the user picked out of them stays a valid thing to re-pick after
+            // a page reload. Only a *failed* request was tied to a draft that is gone.
             actions.save()
           },
         }
@@ -1030,6 +1172,7 @@ window.__ModuleLoader__.load({
       }
 
       dispose() {
+        this.cancelDiscovery()
         this.unsubscribe()
         this.form.dispose()
       }
@@ -1126,6 +1269,107 @@ window.__ModuleLoader__.load({
           label: props.label,
           onChange: (next) => props.onEdit(next === true ? 'true' : 'false'),
         }),
+      })
+    }
+
+    /**
+     * Ask the endpoint what models it has, then let one be picked.
+     *
+     * This is the row that replaces four hand-typed fields. The model id only exists
+     * as something you can be *shown*; nobody should have to know an endpoint's exact
+     * catalogue spelling before the plugin can work at all. So the button asks the
+     * host to interrogate the address above it, and the answer becomes a dropdown —
+     * with the current value kept as an option even when the endpoint does not
+     * advertise it, because a working route must never become unsettable.
+     */
+    function ModelPicker(props) {
+      const { t, state, disabled } = props
+      const models = state.models !== undefined && state.models !== null ? state.models : null
+      const loading = models !== null && models.status === 'loading'
+      const current = state[ROUTE_FIELD] !== undefined ? state[ROUTE_FIELD].text : ''
+      const listed = models !== null && models.status === 'done' ? models.list : []
+      // A route the endpoint did not advertise stays selectable: a gateway may serve
+      // a model without listing it, and silently dropping the saved value would make
+      // a working configuration look broken.
+      const options = listed.some((model) => model.id === current)
+        ? listed
+        : [...listed, ...(current === '' ? [] : [{ id: current, name: current }])]
+
+      return jsxs('div', {
+        className: 'jev-gate-models',
+        style: { display: 'flex', flexDirection: 'column', gap: '4px', margin: '0 0 14px' },
+        children: [
+          jsxs('div', {
+            style: { display: 'flex', alignItems: 'center', gap: '8px' },
+            children: [
+              jsx('button', {
+                key: 'ask',
+                type: 'button',
+                disabled: disabled || loading,
+                onClick: () => props.discoverModels(),
+                children: loading ? t('modelsLoading') : t('modelsFetch'),
+              }),
+              jsx('select', {
+                key: 'select',
+                id: ROUTE_FIELD + '-picker',
+                disabled: disabled || options.length === 0,
+                value: current,
+                onChange: (event) => props.edit(ROUTE_FIELD, event.target.value),
+                style: { minWidth: '14em' },
+                children:
+                  options.length === 0
+                    ? [jsx('option', { key: 'none', value: '', children: t('modelsNone') })]
+                    : options.map((model) =>
+                        jsx('option', { key: model.id, value: model.id, children: model.name }, model.id),
+                      ),
+              }),
+            ],
+          }),
+          models !== null && models.status === 'error'
+            ? jsx('p', {
+                key: 'error',
+                role: 'status',
+                style: { margin: 0, color: 'var(--dsh-danger, crimson)', fontSize: '0.9em' },
+                children: models.error,
+              })
+            : null,
+        ],
+      })
+    }
+
+    /**
+     * A collapsible area whose open/closed state belongs to the card, not the form.
+     *
+     * Deliberately not a settings field: it is a viewing decision, so it must not
+     * become staged draft that a "Save" writes or a "discard" rolls back. React state
+     * is the right owner — it survives re-renders and resets when the tab is
+     * re-opened, which is exactly "default to collapsed".
+     */
+    function Disclosure(props) {
+      const [open, setOpen] = require('react').useState(false)
+      return jsxs('div', {
+        className: 'jev-gate-advanced',
+        style: { marginTop: '18px', borderTop: '1px solid var(--dsh-border, rgba(128,128,128,0.25))' },
+        children: [
+          jsx(
+            'button',
+            {
+              key: 'toggle',
+              type: 'button',
+              'aria-expanded': open,
+              onClick: () => setOpen(!open),
+              style: { width: '100%', textAlign: 'left', padding: '12px 0', fontWeight: 600 },
+              children: `${open ? '▾' : '▸'} ${props.title}`,
+            },
+          ),
+          open
+            ? jsx('div', { key: 'body', children: props.children })
+            : jsx('p', {
+                key: 'hint',
+                style: { margin: '0 0 14px', opacity: 0.7, fontSize: '0.9em' },
+                children: props.hint,
+              }),
+        ],
       })
     }
 
@@ -1240,6 +1484,69 @@ window.__ModuleLoader__.load({
       const state = props.useJevGate((snapshot) => snapshot)
 
       const disabled = !state.writable
+
+      /**
+       * Render one settings row, and slip the API key in right after the reference
+       * name it is stored under — the two are one decision, and splitting them
+       * across a section boundary is what made the old form feel like a form.
+       */
+      // 「闸口」never gets a heading: it is the real start of this page, the basic
+      // area opens with it and the advanced area picks up its tail. Every other
+      // section earns one — once per render, no matter which of the two areas first
+      // crosses into it.
+      const titledSections = new Set(['gate'])
+      const rowsOf = (rows, prefix) => {
+        const out = []
+        let section = null
+        for (const row of rows) {
+          const changed = section !== null && row.section !== section
+          if (changed && !titledSections.has(row.section)) {
+            titledSections.add(row.section)
+            section = row.section
+            const keys = SECTIONS[section]
+            out.push(
+              jsx('h4', {
+                key: `${prefix}:section:${section}`,
+                style: { margin: '18px 0 4px' },
+                children: t(keys.title),
+              }),
+              jsx('p', {
+                key: `${prefix}:section:${section}:hint`,
+                style: { margin: '0 0 14px', opacity: 0.7, fontSize: '0.9em' },
+                children: t(keys.hint),
+              }),
+            )
+          } else {
+            section = row.section
+          }
+          out.push(renderRow(row, props, t, state, disabled))
+          if (row.field === REF_FIELD) {
+            out.push(
+              jsx(SettingsSecretField, {
+                key: `${prefix}:${API_KEY_FIELD}`,
+                id: API_KEY_FIELD,
+                label: t('apiKey'),
+                hint: state.apiKeyWritable ? t('apiKeyHint') : `${t('apiKeyNeedsRef')} ${t('apiKeyHint')}`,
+                disabled: disabled || !state.apiKeyWritable,
+                text: state[API_KEY_FIELD].text,
+                configured: state.apiKeyConfigured,
+                stateLabel: state.apiKeyConfigured ? t('apiKeySet') : t('apiKeyUnset'),
+                onEdit: (text) => props.edit(API_KEY_FIELD, text),
+              }),
+            )
+          }
+        }
+        return out
+      }
+
+      /**
+       * The model row is not a text field up top: it is a picker that needs the
+       * endpoint above it, so the basic path renders `ModelPicker` in its place.
+       * The raw `provider/model` text stays in the advanced area for gateways whose
+       * catalogue cannot be listed — which is why this row keeps no `basic` flag.
+       */
+      const basicRows = BASIC_ROWS.filter((row) => row.field !== ROUTE_FIELD)
+
       const children = [
         jsx('p', {
           key: 'intro',
@@ -1247,40 +1554,43 @@ window.__ModuleLoader__.load({
           children: t('description'),
         }),
       ]
-      let section = null
 
-      for (const row of FIELD_ROWS) {
-        if (row.section !== section) {
-          section = row.section
-          const keys = SECTIONS[section]
-          children.push(jsx('h4', { key: `section:${section}`, style: { margin: '18px 0 4px' }, children: t(keys.title) }))
-          children.push(
-            jsx('p', {
-              key: `section:${section}:hint`,
-              style: { margin: '0 0 14px', opacity: 0.7, fontSize: '0.9em' },
-              children: t(keys.hint),
-            }),
-          )
-        }
-        children.push(renderRow(row, props, t, state, disabled))
-        if (row.field === REF_FIELD) {
-          children.push(
-            jsx(SettingsSecretField, {
-              key: API_KEY_FIELD,
-              id: API_KEY_FIELD,
-              label: t('apiKey'),
-              hint: state.apiKeyWritable ? t('apiKeyHint') : `${t('apiKeyNeedsRef')} ${t('apiKeyHint')}`,
-              disabled: disabled || !state.apiKeyWritable,
-              text: state[API_KEY_FIELD].text,
-              configured: state.apiKeyConfigured,
-              stateLabel: state.apiKeyConfigured ? t('apiKeySet') : t('apiKeyUnset'),
-              onEdit: (text) => props.edit(API_KEY_FIELD, text),
-            }),
-          )
-        }
+      // The API key belongs to the basic path — "fill in an address and a key" is
+      // the whole task — but it is stored under `deciderCredentialRef`, which lives in
+      // the advanced area. Render it right after the URL here, and let the advanced
+      // area's own copy stand as the description of where it went.
+      const urlIndex = basicRows.findIndex((row) => row.field === ENDPOINT_URL_FIELD)
+      const basicOut = rowsOf(basicRows, 'basic')
+      if (urlIndex >= 0 && state.apiKeyWritable) {
+        const secret = jsx(SettingsSecretField, {
+          key: 'basic:api-key',
+          id: API_KEY_FIELD,
+          label: t('apiKey'),
+          hint: t('apiKeyHint'),
+          disabled,
+          text: state[API_KEY_FIELD].text,
+          configured: state.apiKeyConfigured,
+          stateLabel: state.apiKeyConfigured ? t('apiKeySet') : t('apiKeyUnset'),
+          onEdit: (text) => props.edit(API_KEY_FIELD, text),
+        })
+        basicOut.splice(urlIndex + 1, 0, secret)
       }
+      children.push(...basicOut)
+      children.push(jsx(ModelPicker, { key: 'model-picker', t, state, disabled, edit: props.edit, discoverModels: props.discoverModels }))
 
-      children.push(jsx(DecisionPointList, { key: 'decision-points', t }))
+      children.push(
+        jsx(Disclosure, {
+          key: 'advanced',
+          title: t('advanced'),
+          hint: t('advancedHint'),
+          children: jsxs('div', {
+            children: [
+              ...rowsOf(ADVANCED_ROWS, 'advanced'),
+              jsx(DecisionPointList, { key: 'decision-points', t }),
+            ],
+          }),
+        }),
+      )
 
       return jsx(SettingsForm, {
         labels: formLabels(t),
@@ -1293,8 +1603,15 @@ window.__ModuleLoader__.load({
 
     // ───────────────────────────────────────────────────────────────── mounting
 
-    /** Required services (cordis fiber inject). */
-    const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'configForms']
+    /**
+     * Required services (cordis fiber inject).
+     *
+     * `remote.llm` is the host's model-listing bridge, shipped by the core
+     * `dsh-api-remotes` package. It is declared because the picker calls it; the call
+     * site still guards for its absence, since a remote surface that omits a namespace
+     * must cost this page the picker rather than the whole tab.
+     */
+    const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'remote.llm', 'configForms']
 
     /**
      * Mount the configuration page in Settings.
