@@ -1,0 +1,12 @@
+# dsh-jev-gate 作为 profile bundle 被引用时的补丁层。
+#
+# 刻意**不带 config**：装上一个会拦停团队动作的插件，不应该在装上的瞬间
+# 就开始拦。全默认 = enabled:false + mode:'dry-run'，插件在场但什么都不做。
+# 要打开，请在 profile 的 cordis.patch.yml 里按 id 覆写，或走设置面板。
+#
+# 形状是 bundle 补丁的 `insert:` 数组（`dsh-plugin-guide/guide/
+# plugin-dev-guide.md:71`、`quick-reference.md:78`）。写成裸 `- id: …` 的一行
+# 在 profile 自己的 `cordis.patch.yml` 里成立，但**不是** bundle 补丁的形状。
+- insert:
+    - id: dsh-jev-gate
+      name: dsh-jev-gate

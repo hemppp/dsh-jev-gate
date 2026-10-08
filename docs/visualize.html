@@ -1,0 +1,1441 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dsh-jev-gate · 工作原理（物理化动态演示）</title>
+<style>
+  :root {
+    --bg: #06080d;
+    --bg2: #0b1018;
+    --line: #1b2432;
+    --ink: #c8d4e4;
+    --dim: #63718a;
+    --l0: #6b7688;
+    --l1: #4aa8ff;
+    --l2: #ffc451;
+    --l3: #ff5f57;
+    --l4: #c678ff;
+    --ok: #37d39a;
+    --cap: #ff9f1c;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink);
+    font: 13px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif; overflow: hidden; }
+  #wrap { display: flex; height: 100%; }
+  #left { flex: 1 1 auto; position: relative; min-width: 0; }
+  canvas { display: block; width: 100%; height: 100%; }
+  #panel { flex: 0 0 336px; background: linear-gradient(180deg, #0b1018, #080c13);
+    border-left: 1px solid var(--line); overflow-y: auto; padding: 14px 14px 28px; }
+  #panel h1 { font-size: 15px; margin: 0 0 2px; letter-spacing: .3px; }
+  #panel h1 small { color: var(--dim); font-weight: 400; font-size: 11px; display: block; margin-top: 3px; }
+  .sec { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 11px; }
+  .sec > b { display: block; font-size: 11px; color: var(--dim); letter-spacing: 1px;
+    text-transform: uppercase; margin-bottom: 7px; font-weight: 600; }
+  .btns { display: grid; gap: 5px; }
+  button { appearance: none; text-align: left; cursor: pointer; font: inherit;
+    background: #111826; color: var(--ink); border: 1px solid #1e2938;
+    border-radius: 7px; padding: 7px 9px; transition: .12s; }
+  button:hover { background: #16203010; border-color: #2c3d55; }
+  button.on { background: #16233a; border-color: #3a5a86; color: #e8f1ff; }
+  button .k { color: var(--dim); font-size: 11px; display: block; }
+  .seg { display: flex; flex-wrap: wrap; gap: 4px; }
+  .seg button { flex: 1 1 auto; text-align: center; padding: 5px 7px; font-size: 12px; }
+  .row { display: flex; align-items: center; gap: 8px; margin: 7px 0; }
+  .row label { flex: 0 0 88px; color: var(--dim); font-size: 12px; }
+  input[type=range] { flex: 1; accent-color: #4aa8ff; }
+  #verdict { background: #0a0f18; border: 1px solid var(--line); border-radius: 9px;
+    padding: 10px 11px; font-size: 12px; }
+  #verdict .big { font-size: 20px; font-weight: 600; letter-spacing: .5px; margin: 2px 0 6px; }
+  #verdict dl { display: grid; grid-template-columns: 62px 1fr; gap: 2px 8px; margin: 0; }
+  #verdict dt { color: var(--dim); }
+  #verdict dd { margin: 0; }
+  .gapchip { display: inline-block; padding: 1px 6px; border-radius: 5px; margin: 2px 3px 0 0;
+    font-size: 11px; border: 1px solid; }
+  .sev-blocker { color: #ff8b84; border-color: #6b2a26; background: #2a1113; }
+  .sev-high { color: #ffbd74; border-color: #6b4a1c; background: #2a2010; }
+  .sev-medium { color: #9ec5ff; border-color: #2b4468; background: #101a2a; }
+  .sev-low { color: #93a2b8; border-color: #2a3444; background: #131924; }
+  .lvl { font-family: ui-monospace, Consolas, monospace; }
+  .lvl.L0_ledger { color: var(--l0); } .lvl.L1_note { color: var(--l1); }
+  .lvl.L2_continue { color: var(--l2); } .lvl.L3_deny { color: var(--l3); }
+  .lvl.L4_human { color: var(--l4); }
+  .tally { display: grid; grid-template-columns: 1fr auto; gap: 2px 8px; font-size: 12px; }
+  .tally span:nth-child(even) { font-family: ui-monospace, Consolas, monospace; color: #e8f1ff; }
+  .note { color: var(--dim); font-size: 11.5px; margin-top: 8px; line-height: 1.5; }
+  .swatch { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 5px; vertical-align: 1px; }
+  select { appearance: none; -webkit-appearance: none; background: #111826; color: var(--ink);
+    border: 1px solid #1e2938; border-radius: 6px; padding: 4px 6px; font: inherit; font-size: 12px; flex: 1; min-width: 0; }
+  .rd { flex: 0 0 auto; font-family: ui-monospace, Consolas, monospace; color: #8fa2ba; font-size: 11.5px; }
+  .inflight { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
+  .fc { padding: 3px 7px; font-size: 11px; border-radius: 6px; border: 1px solid #1e2938;
+    background: #0d1420; text-align: left; cursor: pointer; }
+  .fc .t { display: block; color: #8fa2ba; font-size: 10.5px; }
+  .fc .l { font-weight: 600; }
+  .fc.on { border-color: #3a5a86; background: #16233a; }
+  .fc.idle { color: #4a5a72; border-style: dashed; cursor: default; }
+  #ruleList a { color: #4aa8ff; cursor: pointer; text-decoration: none; margin-left: 6px; }
+  #ruleList div { margin: 3px 0; }
+  #toast { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%);
+    background: #0d1622ee; border: 1px solid #24344a; border-radius: 9px; padding: 8px 14px;
+    font-size: 12.5px; pointer-events: none; opacity: 0; transition: opacity .25s; }
+  #toast.show { opacity: 1; }
+  #panel::-webkit-scrollbar { width: 8px; }
+  #panel::-webkit-scrollbar-thumb { background: #1b2432; border-radius: 4px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="left">
+    <canvas id="stage"></canvas>
+    <div id="toast"></div>
+  </div>
+  <aside id="panel">
+    <h1>dsh-jev-gate · 工作原理
+      <small>物理演示：每一次团队动作都是一次<b>闯关</b>。闸口不看自述，只看冻结基线与实测证据。</small>
+    </h1>
+
+    <div class="sec">
+      <b>让谁闯关</b>
+      <div class="btns" id="scenarios"></div>
+    </div>
+
+    <div class="sec">
+      <b>运行模式 mode</b>
+      <div class="seg" id="modes"></div>
+      <div class="note" id="modeNote"></div>
+    </div>
+
+    <div class="sec">
+      <b>正文闸 narrativeWatch</b>
+      <div class="seg" id="narratives"></div>
+    </div>
+
+    <div class="sec">
+      <b>身份检查 roleAwareness</b>
+      <div class="seg" id="roles"></div>
+    </div>
+
+    <div class="sec">
+      <b>按决策点压低天花板 rules</b>
+      <div class="row"><label>决策点</label><select id="rulePoint"></select></div>
+      <div class="row"><label>天花板</label><select id="ruleLevel"></select></div>
+      <div class="btns"><button id="ruleAdd">加一条规则</button></div>
+      <div class="note" id="ruleList">没有规则：每个点都用目录（catalog）里的天花板。</div>
+      <div class="note">
+        规则真的收窄这个点（含 <b>enabled:false → L0</b>，和 <b>lockdown 全局压到 L1</b>），
+        而 mode 只收窄「能投递什么」。两者分开，才让 dry-run 仍然记得它本来会用哪一级。
+      </div>
+    </div>
+
+    <div class="sec">
+      <b>本次判定</b>
+      <div class="inflight" id="inflight"></div>
+      <div id="verdict"></div>
+    </div>
+
+    <div class="sec">
+      <b>账本累计</b>
+      <div class="tally" id="tally"></div>
+    </div>
+
+    <div class="sec">
+      <b>播放</b>
+      <div class="btns">
+        <button id="toggle">暂停</button>
+      </div>
+      <div class="row"><label>速度</label><input id="speed" type="range" min="0.25" max="2.5" step="0.05" value="1"></div>
+      <div class="row"><label>同屏呼入</label><input id="burst" type="range" min="0" max="6" step="1" value="2"><span class="rd" id="burstRd">3 条</span></div>
+    </div>
+
+    <div class="sec">
+      <b>读法</b>
+      <div class="note">
+        左→右是工具的调用路径：<b>认人 → 定点 → 取证 → 举升 → 交付</b>。<br>
+        上方是<b>正文通道</b>：模型说话不经过工具，所以它单独过关。<br>
+        中间筛子是核心不变式：<b>A/B 级证据落在筛面上，C 级自述（含一切"我说做完了"）从缝里漏下去</b>。<br>
+        举升塔里，<b>橙色天花板</b>决定这次能说多狠，<b>虚线幽灵</b>表示"本来会说多狠"。<br>
+        <b>同屏呼入</b>把上限放开后，好几条调用会同时压在筛面和井道里：筛面按<b>各自的主人</b>记账，
+        所以 B 的证据永远记在 B 头上，不会算到旁边那条的账上。
+      </div>
+    </div>
+  </aside>
+</div>
+<script>
+"use strict";
+/* =====================================================================
+   一、数据模型 —— 与 host/catalog.ts / host/config.ts / host/intervene.ts 逐条对齐
+   ===================================================================== */
+
+const LEVELS = ['L0_ledger', 'L1_note', 'L2_continue', 'L3_deny', 'L4_human'];
+const RANK = {}; LEVELS.forEach((l, i) => { RANK[l] = i; });
+const LEVEL_CN = {
+  L0_ledger: '记账', L1_note: '附注', L2_continue: '续跑', L3_deny: '拦停', L4_human: '交人',
+};
+const LEVEL_KIND = {
+  L0_ledger: 'none', L1_note: 'note', L2_continue: 'continue', L3_deny: 'deny', L4_human: 'ask',
+};
+const LEVEL_ACTION = {
+  L0_ledger: '写进账本，调用照原样通过',
+  L1_note: '调用通过，但结果后面被贴一条附注',
+  L2_continue: '不拒绝，而是让这一步重走（steer）',
+  L3_deny: '这次调用被拒绝',
+  L4_human: '这次调用被挂起，交给人批准',
+};
+
+const SEVERITY_LEVEL = { low: 'L1_note', medium: 'L1_note', high: 'L2_continue', blocker: 'L3_deny' };
+
+/** 16 种缺口（host/types.ts 的 GAP_KINDS / GAP_SEVERITY / GAP_LABEL）。 */
+const GAPS = {
+  'unreported': { sev: 'high', cn: '基线要求了，报告里没提' },
+  'no-evidence': { sev: 'high', cn: '只有自述，没有实测证据' },
+  'narrative-claim': { sev: 'high', cn: '只在正文里宣布，没有对应动作' },
+  'skeleton': { sev: 'blocker', cn: '声称改了，工作区里却没有这个东西' },
+  'downgrade-unauthorized': { sev: 'high', cn: '未经授权的降级' },
+  'counterfactual-failed': { sev: 'blocker', cn: '预声明的验收谓词实测失败' },
+  'claim-mismatch': { sev: 'high', cn: '结论与证据对不上' },
+  'contract-incomplete': { sev: 'medium', cn: '契约缺目标、验收或验证手段' },
+  'amendment-without-authority': { sev: 'high', cn: '改契约的人没有这个权限' },
+  'unknown-team-tool': { sev: 'low', cn: '未登记的团队动作，没人能判断它对不对' },
+  'baseline-unfrozen': { sev: 'blocker', cn: '还没有冻结的基线可比' },
+  'advance-without-reason': { sev: 'medium', cn: '空推进，没有任何操作' },
+  'close-with-open-work': { sev: 'high', cn: '还有未完成的工作就收队' },
+  'role-unresolved': { sev: 'low', cn: '认不出这个调用者是谁' },
+  'role-mismatch': { sev: 'high', cn: '这个动作不该由这个身份做' },
+  'loosening-not-authorized': { sev: 'blocker', cn: '外部意见想放宽，但没拿到放宽权限' },
+};
+
+/** 14 个决策点（host/catalog.ts 的 DECISION_POINTS）。 */
+const POINTS = {
+  scope_freeze: { title: '划定范围并冻结基线', floor: 'L0_ledger', ceiling: 'L3_deny', gated: true },
+  plan_approval: { title: '批准计划并开始执行', floor: 'L1_note', ceiling: 'L3_deny', gated: true },
+  contract_health: { title: '登记一条工作契约', floor: 'L0_ledger', ceiling: 'L3_deny', gated: true },
+  roster_change: { title: '增删团队成员', floor: 'L1_note', ceiling: 'L3_deny', gated: true },
+  ownership_claim: { title: '认领、改派或接管任务', floor: 'L0_ledger', ceiling: 'L3_deny', gated: true },
+  task_dispatch: { title: '派活或催办', floor: 'L0_ledger', ceiling: 'L2_continue', gated: false },
+  completion_report: { title: '宣布一项工作完成', floor: 'L1_note', ceiling: 'L4_human', gated: true },
+  review_verdict: { title: '给出评审结论', floor: 'L1_note', ceiling: 'L4_human', gated: true },
+  contract_amendment: { title: '修改已登记的契约', floor: 'L1_note', ceiling: 'L3_deny', gated: true },
+  phase_advance: { title: '推进阶段或恢复团队', floor: 'L1_note', ceiling: 'L3_deny', gated: true },
+  team_close: { title: '收队或归档', floor: 'L1_note', ceiling: 'L3_deny', gated: true },
+  narrative_claim: { title: '用正文宣布结论', floor: 'L1_note', ceiling: 'L4_human', gated: true },
+  unknown_team_tool: { title: '未登记的团队动作', floor: 'L0_ledger', ceiling: 'L2_continue', gated: true },
+  status_read: { title: '查看状态', floor: 'L0_ledger', ceiling: 'L0_ledger', gated: false },
+};
+
+/* ---- 纯函数：与宿主实现逐字对应 ---- */
+
+/** host/config.ts capForMode —— 把"想说多狠"压成"这个模式能说多狠"。 */
+function capForMode(level, mode) {
+  if (mode === 'enforce' || mode === 'lockdown') return level;
+  if (mode === 'advisory') return (level === 'L3_deny' || level === 'L4_human') ? 'L1_note' : level;
+  return 'L0_ledger';
+}
+/** host/config.ts configuredCeilingFor —— 规则与 lockdown 真的收窄这个点（不含 mode 帽）。 */
+function configuredCeilingFor(pointId, rules, mode) {
+  let ceiling = POINTS[pointId].ceiling;
+  for (const rule of rules) {
+    if (rule.pointId !== pointId) continue;
+    if (rule.enabled === false) ceiling = 'L0_ledger';
+    if (rule.ceiling !== undefined && RANK[rule.ceiling] < RANK[ceiling]) ceiling = rule.ceiling;
+  }
+  if (mode === 'lockdown' && RANK[ceiling] > RANK['L1_note']) ceiling = 'L1_note';
+  return ceiling;
+}
+/** host/intervene.ts clampLevel —— 先削天花板，再抬地板；地板永不压过天花板。 */
+function clampLevel(level, floor, ceiling) {
+  let r = level;
+  if (RANK[r] > RANK[ceiling]) r = ceiling;
+  if (RANK[r] < RANK[floor] && RANK[ceiling] >= RANK[floor]) r = floor;
+  return r;
+}
+/** host/intervene.ts planLevel —— 返回 {planned, delivered} 与地板天花板。 */
+function planLevel(pointId, status, gaps, rules, mode) {
+  const point = POINTS[pointId];
+  const ceiling = configuredCeilingFor(pointId, rules, mode);
+  const floor = point.floor;
+  if (status === 'insufficient') {
+    return { planned: 'L1_note', delivered: capForMode(clampLevel('L1_note', floor, ceiling), mode), floor, ceiling };
+  }
+  let worst = null;
+  for (const g of gaps) {
+    const s = GAPS[g.kind].sev;
+    if (worst === null || RANK[SEVERITY_LEVEL[s]] > RANK[SEVERITY_LEVEL[worst]]) worst = s;
+  }
+  let planned = worst === null ? 'L0_ledger' : SEVERITY_LEVEL[worst];
+  const clamped = clampLevel(planned, floor, ceiling);
+  return { planned: clamped, delivered: capForMode(clamped, mode), floor, ceiling };
+}
+/** host/gate.ts statusFrom —— blocker→halt，high→hold，否则 advance。 */
+function statusFrom(gaps) {
+  let worst = null;
+  for (const g of gaps) {
+    const s = GAPS[g.kind].sev;
+    if (worst === null || RANK[SEVERITY_LEVEL[s]] > RANK[SEVERITY_LEVEL[worst]]) worst = s;
+  }
+  if (worst === 'blocker') return 'halt';
+  if (worst === 'high') return 'hold';
+  return 'advance';
+}
+const STATUS_CN = { advance: '通过（advance）', hold: '保留（hold）', halt: '拦停（halt）', insufficient: '无从判断（insufficient）' };
+
+/* =====================================================================
+   二、剧本：每一个剧本都是"一次真实的团队动作"
+   ===================================================================== */
+
+const SCENARIOS = [
+  {
+    key: 'freeze', label: '① 队长开队并冻结基线', sub: 'agent_teams_create · 队一起来，基线就冻结',
+    tool: 'agent_teams_create', point: 'scope_freeze', actor: 'captain', team: '二号插件',
+    args: { goal: '把这次交付的范围钉死' },
+    chips: [{ level: 'A', text: '工具结果：基线与范围已写入 .dsh-jev-gate/baseline.json' }],
+    gaps: [], prose: null,
+    story: '先有冻结的基线，后面每一条判定才有对照物。它由队伍状态推断而来（也可以由门禁自己的 jev_gate_freeze 显式声明）；一旦冻结就不再覆盖，它是唯一权威。',
+  },
+  {
+    key: 'contract', label: '② 登记任务，契约不全', sub: 'team_task_create · contract-incomplete',
+    tool: 'team_task_create', point: 'contract_health', actor: 'captain', team: '内置',
+    args: { subject: 'task-7' },
+    chips: [{ level: 'A', text: '工具参数里只有 subject，没有 objective / acceptance / verify' }],
+    gaps: [{ kind: 'contract-incomplete', item: 'task-7' }], prose: null,
+    story: '契约缺了三样东西里的任意一样，这条任务就没法被验收——所以这里贴一条附注。',
+  },
+  {
+    key: 'honest', label: '③ 宣称完成，且有实测证据', sub: 'agent_teams_update_task · 全部条目录到 A/B',
+    tool: 'agent_teams_update_task', point: 'completion_report', actor: 'member', team: '二号插件',
+    args: { status: 'completed', acceptanceResults: [{ criterion: 'reports/accept.md 里有 PASS', status: 'passed' }] },
+    chips: [
+      { level: 'A', text: 'workspace-diff：3 个文件真的变了，与自述一致' },
+      { level: 'B', text: 'predicate：contains reports/accept.md "PASS" → 成立' },
+    ],
+    gaps: [], prose: null,
+    story: '证据落在筛面上，缺口为空。地板 L1 仍然会让它带一条附注出去——"记一笔，但这一笔是干净的"。',
+  },
+  {
+    key: 'selfreport', label: '④ 宣称完成，只有自述', sub: 'agent_teams_update_task · no-evidence',
+    tool: 'agent_teams_update_task', point: 'completion_report', actor: 'member', team: '二号插件',
+    args: { status: 'completed' },
+    chips: [
+      { level: 'C', text: '自述：「已经改完了，测试也都过了。」' },
+      { level: 'C', text: 'tool-arguments：调用方把 status 写成 completed' },
+    ],
+    gaps: [{ kind: 'no-evidence', item: 'item-impl' }], prose: null,
+    story: 'C 级全从筛缝漏下去，一行都没进判定。于是这些漂亮的句子只算"声明"，不算证据。',
+  },
+  {
+    key: 'skeleton', label: '⑤ 说改了，文件根本不存在', sub: 'completion_report · skeleton + unreported',
+    tool: 'agent_teams_update_task', point: 'completion_report', actor: 'member', team: '二号插件',
+    args: { status: 'completed' },
+    chips: [
+      { level: 'A', text: 'workspace-diff：item-impl.ts 不存在，却被声称改过' },
+      { level: 'C', text: '自述：「实现已经落地。」' },
+    ],
+    gaps: [{ kind: 'skeleton', item: 'item-impl' }, { kind: 'unreported', item: 'item-docs' }], prose: null,
+    story: 'blocker 级缺口 → status=halt → 计划升到 L3 拦停。举升塔的钢门会砸下来。',
+  },
+  {
+    key: 'review', label: '⑥ 评审结论与证据对不上', sub: 'review_verdict · claim-mismatch',
+    tool: 'agent_teams_update_task', point: 'review_verdict', actor: 'member', team: '二号插件',
+    args: { verdict: 'pass', findings: [] },
+    chips: [{ level: 'B', text: 'predicate：verify 命令判定失败，结论却写 verdict=pass' }],
+    gaps: [{ kind: 'claim-mismatch', item: 'task-7' }], prose: null,
+    story: '评审者说自己独立下结论——那就看证据。对不上就是 high 级缺口。',
+  },
+  {
+    key: 'prose', label: '⑦ 只是在正文里宣布完成', sub: 'agent/assistant-stream · narrative-claim',
+    tool: null, point: 'narrative_claim', actor: 'captain', team: '正文通道',
+    chips: [
+      { level: 'C', text: '正文：「全部做完了，测试也通过了。」（没有任何工具调用）' },
+      { level: 'A', text: 'assistant-stream：这句话确实被发出来了（但它只是"发出来了"）' },
+    ],
+    gaps: [{ kind: 'narrative-claim', item: null }], prose: '全部做完了，测试也通过了。',
+    story: '这条通道专门抓"用嘴交付"。没有点名产物的句子会被放过，点名了却拿不出 A/B 证据的就是缺口。',
+  },
+  {
+    key: 'unknown', label: '⑧ 未登记的团队工具', sub: 'agent_teams_* 里的陌生名字 · 保守默认 gated',
+    tool: 'agent_teams_parallel_dispatch', point: 'unknown_team_tool', actor: 'member', team: '二号插件',
+    args: { members: ['a', 'b'] },
+    chips: [{ level: 'A', text: '工具名以 agent_teams_ 开头，但目录里没有登记它' }],
+    gaps: [{ kind: 'unknown-team-tool', item: null }], prose: null,
+    story: '目录比手写名单宽：前缀命中就算团队动作，并按最保守的方式过闸，而不是当没看见。',
+  },
+  {
+    key: 'nobaseline', label: '⑨ 没有基线就宣称完成', sub: 'baseline-unfrozen → insufficient',
+    tool: 'agent_teams_update_task', point: 'completion_report', actor: 'member', team: '二号插件',
+    args: { status: 'completed' },
+    chips: [{ level: 'C', text: '自述：「做完了。」——但还没有任何冻结的基线' }],
+    gaps: [{ kind: 'baseline-unfrozen', item: null }], prose: null,
+    story: '门禁真的不知道，所以它计划 L1 而不是拦截：在团队还在成形的时候靠"我不知道"去拦停，等于让这个工具不可用。',
+  },
+  {
+    key: 'readonly', label: '⑩ 只是看一眼状态', sub: 'agent_teams_status · 未门禁，直接过',
+    tool: 'agent_teams_status', point: 'status_read', actor: 'any', team: '二号插件',
+    args: {},
+    chips: [{ level: 'A', text: '只读调用，不改变任何东西' }],
+    gaps: [], prose: null, ungated: true,
+    story: '14 个决策点里有 2 个不门禁：看状态和派活。看东西不需要许可。',
+  },
+];
+
+/* =====================================================================
+   三、画布与场景几何
+   ===================================================================== */
+
+const cv = document.getElementById('stage');
+const ctx = cv.getContext('2d');
+const W = 1440, H = 860;
+
+const BELT_Y = 700;
+const R = 16;
+
+const ROSTER_X = 300, CATALOG_X = 470, SIEVE_X = 800;
+const SHAFT_X0 = 960, SHAFT_X1 = 1100, SHAFT_CX = (SHAFT_X0 + SHAFT_X1) / 2;
+const BAY_X0 = SHAFT_X1 + 6, BAY_X1 = SHAFT_X1 + 230;
+const LEVEL_H = 104;
+const levelY = (rank) => BELT_Y - LEVEL_H * rank;
+const plateBottom = (rank) => levelY(rank) - 32;
+
+// 多路并发：筛面与井道可以同时站好几个工件，于是给每条调用一条"车道"
+// （0/1/2 分别偏左 / 居中 / 偏右）。传送带本身仍是单列，错开的是到达时间。
+const LANE_GAP = 46;
+const LANE_BELT_K = 0.6;
+const laneDx = (lane) => ((lane % 3) - 1) * LANE_GAP;
+
+// 取证区：斜面筛网（左低右高，碎片往左滑）+ 两个悬空料桶，都悬在传送带上方
+const SIEVE = { x0: 700, x1: 900, y0: 402, y1: 368 };
+const HOPPER = { x0: 744, y: 250, x1: 862 };
+const BIN_OK = { x0: 588, y0: 430, x1: 700, y1: 512 };
+const BIN_NO = { x0: 760, y0: 470, x1: 902, y1: 552 };
+const PROSE_Y = 118;
+
+let scale = 1, offX = 0, offY = 0;
+function resize() {
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const rect = cv.parentElement.getBoundingClientRect();
+  cv.width = Math.max(320, Math.floor(rect.width * dpr));
+  cv.height = Math.max(240, Math.floor(rect.height * dpr));
+  scale = Math.min(cv.width / W, cv.height / H) / dpr;
+  offX = (cv.width / dpr - W * scale) / 2;
+  offY = (cv.height / dpr - H * scale) / 2;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+window.addEventListener('resize', resize);
+
+/* =====================================================================
+   四、物理
+   ===================================================================== */
+
+const G = 1500;
+const chips = [];      // 证据碎片
+const calls = [];      // 一次工具调用
+const sparks = [];     // 撞击火花
+const flags = [];      // 正文通道升起的红旗
+const bubbles = [];    // 正文气泡
+
+// 筛面：一串弹簧节点，被碎片压出真实的下陷
+const NODES = 26;
+const mesh = { nodes: [], k: 260, damp: 9 };
+for (let i = 0; i < NODES; i++) {
+  const t = i / (NODES - 1);
+  mesh.nodes.push({ x: SIEVE.x0 + (SIEVE.x1 - SIEVE.x0) * t, rest: SIEVE.y0 + (SIEVE.y1 - SIEVE.y0) * t, y: 0, vy: 0, lift: 0 });
+}
+for (const n of mesh.nodes) n.y = n.rest;
+function meshAtX(x) {
+  const t = (x - SIEVE.x0) / (SIEVE.x1 - SIEVE.x0);
+  const f = Math.max(0, Math.min(NODES - 1, t * (NODES - 1)));
+  const i = Math.floor(f), j = Math.min(NODES - 1, i + 1), u = f - i;
+  return mesh.nodes[i].y + (mesh.nodes[j].y - mesh.nodes[i].y) * u;
+}
+function stepMesh(dt) {
+  for (const n of mesh.nodes) {
+    const a = -mesh.k * (n.y - n.rest) - mesh.damp * n.vy;
+    n.vy += a * dt;
+    n.y += n.vy * dt;
+    if (n.y < n.rest - 60) { n.y = n.rest - 60; n.vy = 0; }
+    if (n.y > n.rest + 90) { n.y = n.rest + 90; n.vy = 0; }
+  }
+}
+function pressMesh(x, force) {
+  for (const n of mesh.nodes) {
+    const d = Math.abs(n.x - x);
+    if (d > 70) continue;
+    n.vy += force * (1 - d / 70) * 4.5;
+  }
+}
+
+function addSpark(x, y, n, hue, spd) {
+  for (let i = 0; i < n; i++) {
+    const a = Math.random() * Math.PI * 2, s = (0.3 + Math.random()) * (spd || 260);
+    sparks.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 60, life: 0.5 + Math.random() * 0.5, age: 0, hue: hue || 32, r: 1.4 + Math.random() * 2.2 });
+  }
+}
+
+/* ---- 证据碎片 ----
+ * 每一块碎片都记住自己属于哪一次调用（`owner`）。多路并发时，"这条证据算谁的"
+ * 必须由碎片自己回答：如果去问"当前那条调用"，B 的证据就会被记到 A 头上，
+ * 而这恰好是这个插件最不该犯的错——把证据归错人。 */
+function spawnChip(owner, chip, delay) {
+  const solid = chip.level !== 'C';
+  chips.push({
+    x: HOPPER.x0 + 20 + Math.random() * (HOPPER.x1 - HOPPER.x0 - 40),
+    y: HOPPER.y + 10, vx: (Math.random() - .5) * 30, vy: 40,
+    r: solid ? 11 : 12.5,
+    level: chip.level, text: chip.text, solid,
+    delay, age: -delay, landed: false, rolled: false, escaped: false, spent: false,
+    owner: owner || null,
+    rot: Math.random() * 6.28, spin: (Math.random() - .5) * 6,
+  });
+}
+function stepChips(dt) {
+  for (const c of chips) {
+    c.age += dt;
+    if (c.age < 0) continue;
+    c.vy += G * dt;
+    c.rot += c.spin * dt;
+    c.x += c.vx * dt;
+    c.y += c.vy * dt;
+
+    if (c.solid && !c.escaped) {
+      // 与筛面碰撞
+      if (c.x > SIEVE.x0 - 4 && c.x < SIEVE.x1 + 4) {
+        const my = meshAtX(c.x);
+        if (c.y + c.r > my) {
+          const pen = c.y + c.r - my;
+          c.y -= pen;
+          if (c.vy > 60) { pressMesh(c.x, Math.min(c.vy / 420, 2.4)); addSpark(c.x, my, 3, 190, 90); }
+          c.vy = -c.vy * 0.16;
+          c.landed = true;
+          // 斜面：左低右高 → 向左滚
+          c.vx -= 210 * dt;
+          c.spin = -Math.abs(c.vx) * 0.05;
+        }
+      }
+      if (c.x < SIEVE.x0 - 2 && !c.escaped) { c.escaped = true; c.vx -= 40; }
+    }
+    // 落进桶里。记账看的是碎片的主人，不是"当前那条调用"。
+    if (c.solid && c.escaped && c.x > BIN_OK.x0 - 12 && c.x < BIN_OK.x1 + 12 && c.y + c.r > BIN_OK.y0) {
+      c.y = BIN_OK.y0 - c.r; c.vy = 0; c.vx *= 0.6;
+      if (!c.spent) {
+        c.spent = true;
+        state.totals.credited++;
+        if (c.owner) { c.owner.credited++; c.owner.pulse = 1; toastOnce(c.owner, '计入判定的证据 +1'); }
+        tallyDirty = true;
+      }
+    }
+    if (!c.solid && c.x > BIN_NO.x0 - 10 && c.x < BIN_NO.x1 + 10 && c.y + c.r > BIN_NO.y0) {
+      c.y = BIN_NO.y0 - c.r; c.vy = -c.vy * 0.2; c.vx *= 0.8;
+      if (!c.spent) {
+        c.spent = true;
+        state.totals.discarded++;
+        if (c.owner) { c.owner.discarded++; c.owner.dim = 1; toastOnce(c.owner, '自述不算证据，丢进弃料桶'); }
+        tallyDirty = true;
+      }
+    }
+    // 已经记完账的碎片在桶里待一小会儿就消失：否则开着一整天，两个桶会越堆越多。
+    if (c.spent) { c.rest = (c.rest || 0) + dt; if (c.rest > 1.4) c.gone = true; }
+    if (c.y > H + 200) c.gone = true;
+  }
+  for (let i = chips.length - 1; i >= 0; i--) if (chips[i].gone) chips.splice(i, 1);
+}
+
+/* ---- 一次调用 ---- */
+function spawnCall(scn, state) {
+  const status = scn.point === 'status_read' ? 'advance' : statusFrom(scn.gaps);
+  const st = scn.key === 'nobaseline' ? 'insufficient' : status;
+  const gapsForPlan = scn.key === 'nobaseline' ? [] : scn.gaps;
+  const plan = planLevel(scn.point, st, gapsForPlan, state.rules, state.mode);
+  const c = {
+    scn, point: scn.point, pointInfo: POINTS[scn.point],
+    status: st, realStatus: status, gaps: scn.gaps,
+    planned: plan.planned, delivered: plan.delivered,
+    floor: plan.floor, ceiling: plan.ceiling,
+    action: LEVEL_ACTION[plan.delivered], kind: LEVEL_KIND[plan.delivered],
+    t: 0, x: 96, y: BELT_Y - R - 8, vx: 0, vy: 0,
+    credited: 0, discarded: 0, pulse: 0, dim: 0,
+    phase: 'in', outcomeT: 0, revealed: [], done: false, settled: false, doneT: 0, squash: 0, hitCeiling: false,
+    hatchOpen: 0, doorT: 0, ghostY: null, toast: null, toastT: 0,
+    shake: 0, stopped: false, lane: state.laneSeq++ % 3,
+  };
+  if (st === 'insufficient') {
+    c.forcedNote = '门禁不知道（没有基线），所以计划 L1 而不是拦截。';
+  }
+  calls.push(c);
+  for (const ch of scn.chips) spawnChip(c, ch, 0.2 + Math.random() * 0.5);
+  if (scn.prose) spawnBubble(scn.prose, true);
+  return c;
+}
+function toastOnce(c, msg) { c.toast = msg; c.toastT = 1.6; }
+
+/* ---- 正文通道 ---- */
+const AMBIENT = [
+  '我再核对一遍 §3 的措辞。', '这条我先不动，等你确认。', '接下来我会补上测试。',
+  '刚才那步已经完成了吗？', '把范围收窄到两个文件。', '这里指的是"证据"的定义。',
+];
+const CLAIM_RE = /(?:已|都|全部|统统)(?:经)?(?:完成|改完|修好|搞定|做完|实现|通过)|(?:完成|改完|修好|搞定|做完)了(?!吗|呢|\?|？)|测试(?:现在)?(?:全部)?通过|✅/;
+const NEG_RE = /不|没|尚未|未|还没|not yet|cannot|can't|将|将要|计划|下一步|接下来|待办|剩余|需要(?:完成|改|修|做|实现)|\?\s*$|的定义|意思是|指的是/;
+function spawnBubble(text, forced) {
+  bubbles.push({
+    x: 1400, y: PROSE_Y - 14 + (Math.random() - .5) * 30, text, forced: !!forced,
+    vy: 0, scanned: false, flagged: false, w: 0, life: 0,
+  });
+}
+function stepBubbles(dt, state) {
+  for (const b of bubbles) {
+    b.life += dt;
+    b.x -= 62 * dt;
+    b.y += Math.sin(b.life * 2 + b.x * 0.01) * 3 * dt;
+    if (!b.scanned && b.x < 980) {
+      b.scanned = true;
+      const claim = CLAIM_RE.test(b.text) && !NEG_RE.test(b.text);
+      b.claim = claim;
+      if (claim && state.narrativeWatch !== 'off') {
+        b.flagged = true;
+        // 点名了产物（含 .ts/.md/npm 之类的 token）
+        if (/\.(?:ts|js|md|json|mjs)|npm|测试|verify/.test(b.text) || b.forced) {
+          flags.push({ x: b.x, y: b.y - 26, vy: -60, life: 1.4, age: 0, tx: SHAFT_CX, ty: levelY(3) });
+          b.real = true;
+        }
+      }
+    }
+    if (b.x < -260) b.gone = true;
+  }
+  for (let i = bubbles.length - 1; i >= 0; i--) if (bubbles[i].gone) bubbles.splice(i, 1);
+  for (const f of flags) {
+    f.age += dt;
+    f.vy += 60 * dt;
+    f.y += f.vy * dt;
+    f.x += (f.tx - f.x) * 1.6 * dt;
+  }
+  for (let i = flags.length - 1; i >= 0; i--) if (flags[i].age > flags[i].life) flags.splice(i, 1);
+}
+
+/* ---- 主粒子时间线（用时间线切换相位，用物理负责升降与碰撞） ---- */
+const TL = { arrive: 1.5, sieveEnd: 3.4, liftEnd: 5.2, outEnd: 7.0 };
+function stepCall(c, dt, state) {
+  c.t += dt;
+  c.pulse = Math.max(0, c.pulse - dt * 2);
+  c.dim = Math.max(0, c.dim - dt * 2);
+  c.squash = Math.max(0, c.squash - dt * 2.4);
+  c.toastT = Math.max(0, c.toastT - dt);
+  c.shake = Math.max(0, c.shake - dt * 3.2);
+
+  const t = c.t;
+  if (t < TL.arrive) {
+    // 沿带前行，在名册与目录两站短暂停顿
+    const u = t / TL.arrive;
+    const stops = [0, 0.30, 0.42, 0.66, 0.78, 1];
+    const xs = [96, ROSTER_X, ROSTER_X, CATALOG_X, CATALOG_X, SIEVE_X];
+    let x = 96;
+    for (let i = 0; i < stops.length - 1; i++) {
+      if (u >= stops[i] && u <= stops[i + 1]) {
+        const k = (u - stops[i]) / (stops[i + 1] - stops[i]);
+        const e = k < .5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2;
+        x = xs[i] + (xs[i + 1] - xs[i]) * e;
+      }
+    }
+    c.x = x + laneDx(c.lane) * LANE_BELT_K; c.y = BELT_Y - R - 8;
+    c.phase = 'in';
+    if (t > 0.42 && !c.revealed.includes('actor')) c.revealed.push('actor');
+    if (t > 0.78 && !c.revealed.includes('point')) c.revealed.push('point');
+  } else if (t < TL.sieveEnd) {
+    c.x = SIEVE_X + laneDx(c.lane) * LANE_BELT_K; c.phase = 'sieve';
+    c.y = BELT_Y - R - 8 + Math.sin(t * 9) * 2.5;
+    if (!c.revealed.includes('ev')) c.revealed.push('ev');
+  } else if (t < TL.liftEnd) {
+    c.phase = 'lift';
+    // 举升：被拉到"计划级别"，橙色天花板负责物理封顶
+    const targetY = levelY(RANK[c.planned]) - R - 8;
+    const k = 26, d = 6.2;
+    c.vy += (targetY - c.y) * k * dt - c.vy * d * dt;
+    c.y += c.vy * dt;
+    c.x += ((SHAFT_CX + laneDx(c.lane)) - c.x) * 6 * dt;
+
+    const pb = plateBottom(RANK[c.ceiling]) - (c.ceiling === 'L0_ledger' ? 0 : 0);
+    if (c.y - R < pb) {
+      c.y = pb + R;
+      if (Math.abs(c.vy) > 90) { c.squash = 1; c.shake = 0.7; addSpark(c.x, pb, 8, 26, 200); c.hitCeiling = true; }
+      c.vy = Math.abs(c.vy) * 0.22;
+    }
+    if (!c.revealed.includes('plan')) c.revealed.push('plan');
+  } else {
+    c.phase = 'out';
+  }
+
+  // 结算
+  if (t >= TL.liftEnd && c.hatchOpen === 0) {
+    c.hatchOpen = 0.001;
+    c.doorT = 0;
+    if (!c.revealed.includes('deliver')) c.revealed.push('deliver');
+  }
+  if (c.hatchOpen > 0 && c.hatchOpen < 1) c.hatchOpen = Math.min(1, c.hatchOpen + dt * 2.2);
+
+  if (t >= TL.liftEnd) {
+    const o = t - TL.liftEnd;
+    if (c.kind === 'none' || c.kind === 'note') {
+      c.y += ((BELT_Y - R - 8) - c.y) * 2.4 * dt;
+      c.x += 220 * dt;
+      if (c.x > 1450) c.done = true;
+    } else if (c.kind === 'continue') {
+      // 被 steer：沿返回轨道推回左侧（从它当前所在的车道起飞，避免瞬移）
+      const p = Math.min(1, o / 2.6);
+      const sx = c.x, sy = c.y;
+      const ex = 140, ey = BELT_Y - R - 8;
+      const mx = (sx + ex) / 2, my = Math.max(sy, ey) - 120;
+      const q = 1 - p;
+      c.x = q * q * sx + 2 * q * p * mx + p * p * ex;
+      c.y = q * q * sy + 2 * q * p * my + p * p * ey;
+      if (p >= 1) c.done = true;
+    } else if (c.kind === 'deny') {
+      if (c.doorT === 0) { c.doorT = 0.001; c.shake = 1; addSpark(c.x, c.y, 26, 4, 420); }
+      c.doorT = Math.min(1, c.doorT + dt * 4.2);
+      c.vy += G * dt * 0.9;
+      c.y += c.vy * dt;
+      if (c.y + R > BELT_Y - 8) { c.y = BELT_Y - 8 - R; c.vy = -Math.abs(c.vy) * 0.28; if (c.vy > -30) c.vy = 0; c.vx -= 500 * dt; }
+      c.x += c.vx * dt;
+      if (c.x < 150) c.done = true;
+    } else if (c.kind === 'ask') {
+      // 顶盖打开，浮到人类托架
+      const tx = BAY_X1 - 90 + laneDx(c.lane) * 0.5, ty = levelY(4) - R - 40;
+      c.x += (tx - c.x) * 1.7 * dt;
+      c.y += (ty - c.y) * 1.7 * dt;
+      if (o > 3.2) c.done = true;
+    }
+  }
+  c.spawnedT = t;
+}
+
+/* =====================================================================
+   五、绘制
+   ===================================================================== */
+
+function bg() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, '#080c13'); g.addColorStop(.55, '#06090f'); g.addColorStop(1, '#04060a');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  ctx.strokeStyle = '#0e141e'; ctx.lineWidth = 1;
+  for (let x = 0; x < W; x += 48) { ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke(); }
+  for (let y = 0; y < H; y += 48) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke(); }
+}
+function label(text, x, y, color, size, align) {
+  ctx.fillStyle = color || '#63718a';
+  ctx.font = (size || 12) + 'px "Segoe UI","Microsoft YaHei",system-ui,sans-serif';
+  ctx.textAlign = align || 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+function mono(text, x, y, color, size, align) {
+  ctx.fillStyle = color || '#c8d4e4';
+  ctx.font = (size || 12) + 'px ui-monospace,Consolas,monospace';
+  ctx.textAlign = align || 'left'; ctx.textBaseline = 'middle';
+  ctx.fillText(text, x, y);
+}
+function rrect(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r); ctx.arcTo(x, y + h, x, y, r); ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawBelt(time) {
+  ctx.fillStyle = '#0d131d';
+  ctx.fillRect(90, BELT_Y, 1360, 26);
+  ctx.strokeStyle = '#1d2a3c'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(90, BELT_Y); ctx.lineTo(1450, BELT_Y); ctx.stroke();
+  // 履带纹路
+  ctx.strokeStyle = '#16202e'; ctx.lineWidth = 3;
+  for (let i = 0; i < 46; i++) {
+    const x = 90 + ((i * 30 + time * 46) % 1360);
+    ctx.beginPath(); ctx.moveTo(x, BELT_Y + 4); ctx.lineTo(x - 8, BELT_Y + 22); ctx.stroke();
+  }
+  label('工具调用通道', 130, BELT_Y + 46, '#2b3a4f', 12, 'left');
+}
+
+function drawStations(time) {
+  // 名册
+  ctx.save();
+  const rr = 30, rp = (time * 0.9) % (Math.PI * 2);
+  ctx.strokeStyle = '#22304a'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(ROSTER_X, BELT_Y - 86, rr, 0, 6.284); ctx.stroke();
+  for (let i = 0; i < 3; i++) {
+    const a = rp + i * 2.094;
+    ctx.fillStyle = ['#ffc451', '#4aa8ff', '#5d6b83'][i];
+    ctx.beginPath(); ctx.arc(ROSTER_X + Math.cos(a) * rr, BELT_Y - 86 + Math.sin(a) * rr, 5.5, 0, 6.284); ctx.fill();
+  }
+  ctx.strokeStyle = '#1b2738'; ctx.beginPath(); ctx.moveTo(ROSTER_X, BELT_Y - 56); ctx.lineTo(ROSTER_X, BELT_Y); ctx.stroke();
+  ctx.restore();
+  label('① 认人', ROSTER_X, BELT_Y - 132, '#3c4d66', 12);
+  label('roster', ROSTER_X, BELT_Y - 116, '#2b3a4f', 10.5);
+
+  // 目录
+  ctx.save();
+  ctx.strokeStyle = '#22304a'; ctx.lineWidth = 2;
+  rrect(CATALOG_X - 40, BELT_Y - 104, 80, 26, 5); ctx.stroke();
+  ctx.fillStyle = '#0c1420'; rrect(CATALOG_X - 40, BELT_Y - 104, 80, 26, 5); ctx.fill();
+  for (let i = 0; i < 10; i++) {
+    ctx.fillStyle = i % 2 ? '#1b2738' : '#141d2a';
+    ctx.fillRect(CATALOG_X - 34 + i * 7, BELT_Y - 100, 3, 18);
+  }
+  ctx.strokeStyle = '#1b2738'; ctx.beginPath(); ctx.moveTo(CATALOG_X, BELT_Y - 78); ctx.lineTo(CATALOG_X, BELT_Y); ctx.stroke();
+  ctx.restore();
+  label('② 定点', CATALOG_X, BELT_Y - 132, '#3c4d66', 12);
+  label('catalog 14 点', CATALOG_X, BELT_Y - 116, '#2b3a4f', 10.5);
+}
+
+function drawSieve(time) {
+  // 料斗
+  ctx.strokeStyle = '#22304a'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(HOPPER.x0 - 34, HOPPER.y - 56); ctx.lineTo(HOPPER.x0 - 34, HOPPER.y - 12);
+  ctx.lineTo(HOPPER.x0, HOPPER.y + 6); ctx.moveTo(HOPPER.x1 + 34, HOPPER.y - 56);
+  ctx.lineTo(HOPPER.x1 + 34, HOPPER.y - 12); ctx.lineTo(HOPPER.x1, HOPPER.y + 6);
+  ctx.stroke();
+  label('③ 取证', SIEVE_X, HOPPER.y - 78, '#3c4d66', 12);
+  label('evidence：A / B / C 三档', SIEVE_X, HOPPER.y - 62, '#2b3a4f', 10.5);
+
+  // 筛面
+  ctx.strokeStyle = '#8ea6c8'; ctx.lineWidth = 2.4;
+  ctx.beginPath();
+  for (let i = 0; i < NODES; i++) {
+    const n = mesh.nodes[i];
+    if (i === 0) ctx.moveTo(n.x, n.y); else ctx.lineTo(n.x, n.y);
+  }
+  ctx.stroke();
+  ctx.fillStyle = '#8ea6c8';
+  for (let i = 0; i < NODES; i += 1) {
+    const n = mesh.nodes[i];
+    ctx.beginPath(); ctx.arc(n.x, n.y, 1.9, 0, 6.284); ctx.fill();
+  }
+  label('A / B 落在这上面', (SIEVE.x0 + SIEVE.x1) / 2, SIEVE.y0 + 30, '#5f7a9c', 11);
+
+  // 两个桶
+  const bin = (b, color, title, sub) => {
+    ctx.strokeStyle = color; ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(b.x0, b.y0); ctx.lineTo(b.x0, b.y1); ctx.lineTo(b.x1, b.y1); ctx.lineTo(b.x1, b.y0);
+    ctx.stroke();
+    label(title, (b.x0 + b.x1) / 2, b.y1 + 18, color, 11.5);
+    label(sub, (b.x0 + b.x1) / 2, b.y1 + 33, '#3c4d66', 10.5);
+  };
+  bin(BIN_OK, '#37d39a', '计入判定', 'A / B · 门禁亲自看见的');
+  bin(BIN_NO, '#5d6b83', '弃料桶', 'C · 自述，不计入判定');
+  // 筛缝示意
+  ctx.setLineDash([3, 5]); ctx.strokeStyle = '#26333f'; ctx.lineWidth = 1;
+  for (let x = SIEVE.x0 + 20; x < SIEVE.x1; x += 34) {
+    ctx.beginPath(); ctx.moveTo(x, meshAtX(x)); ctx.lineTo(x, BIN_NO.y0); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+}
+
+function drawTower(time) {
+  // 井道
+  ctx.strokeStyle = '#1c2735'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(SHAFT_X0, BELT_Y); ctx.lineTo(SHAFT_X0, levelY(4) - 90);
+  ctx.lineTo(SHAFT_X1, levelY(4) - 90); ctx.lineTo(SHAFT_X1, BELT_Y);
+  ctx.stroke();
+  // 导轨
+  ctx.strokeStyle = '#141d29'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.moveTo(SHAFT_X0 + 14, BELT_Y); ctx.lineTo(SHAFT_X0 + 14, levelY(4) - 80);
+  ctx.moveTo(SHAFT_X1 - 14, BELT_Y); ctx.lineTo(SHAFT_X1 - 14, levelY(4) - 80); ctx.stroke();
+
+  // 井道里可以同时有好几条调用在爬：每层是否亮起，看有没有人正好交付在这一层。
+  const live = calls.filter((c) => !c.done);
+  const focus = state.current && !state.current.done ? state.current : null;
+
+  label('④ 举升与交付', SHAFT_CX, levelY(4) - 128, '#3c4d66', 12);
+  label('floor / ceiling / mode 帽', SHAFT_CX, levelY(4) - 112, '#2b3a4f', 10.5);
+
+  // 每层
+  const colors = { L0_ledger: '#6b7688', L1_note: '#4aa8ff', L2_continue: '#ffc451', L3_deny: '#ff5f57', L4_human: '#c678ff' };
+  for (let r = 0; r <= 4; r++) {
+    const lv = LEVELS[r], y = levelY(r);
+    const hatched = live.find((c) => RANK[c.delivered] === r && c.t > TL.liftEnd);
+    const active = !!hatched;
+    ctx.strokeStyle = active ? colors[lv] : '#1c2735';
+    ctx.lineWidth = active ? 2.4 : 1.4;
+    ctx.setLineDash(r === 0 ? [] : [6, 7]);
+    ctx.beginPath(); ctx.moveTo(SHAFT_X0 + 20, y); ctx.lineTo(SHAFT_X1 - 20, y); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = active ? colors[lv] : '#33445c';
+    ctx.beginPath(); ctx.arc(SHAFT_X0 + 20, y, 3.4, 0, 6.284); ctx.fill();
+    mono(lv.replace('_', ' '), SHAFT_X0 - 12, y, active ? colors[lv] : '#33445c', 11, 'right');
+
+    // 交付口（同一层可能同时开着好几扇，取开得最大的那条来定开度）
+    const openAmt = hatched ? hatched.hatchOpen : 0;
+    const open = !!hatched;
+    const hy = y - 26;
+    ctx.save();
+    ctx.globalAlpha = 0.55 + 0.45 * openAmt;
+    ctx.strokeStyle = colors[lv];
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(SHAFT_X1 - 6, hy); ctx.lineTo(SHAFT_X1 + 14, hy - openAmt * 20);
+    ctx.moveTo(SHAFT_X1 - 6, hy + 30); ctx.lineTo(SHAFT_X1 + 14, hy + 30 + openAmt * 20);
+    ctx.stroke();
+    ctx.restore();
+    mono(LEVEL_CN[lv], BAY_X1 - 6, y, open ? colors[lv] : '#2b3a4f', 11.5, 'right');
+  }
+
+  // 橙色天花板（每一条在途调用各有一块）—— 真正的物理封顶
+  for (const c of live) {
+    if (c.t < TL.sieveEnd) continue;
+    const pb = plateBottom(RANK[c.ceiling]);
+    const wide = 84;
+    const px = SHAFT_CX + laneDx(c.lane);
+    const g = ctx.createLinearGradient(0, pb - 16, 0, pb);
+    g.addColorStop(0, '#ff9f1c'); g.addColorStop(1, '#8a4f00');
+    ctx.fillStyle = g;
+    ctx.fillRect(px - wide / 2, pb - 15, wide, 15);
+    ctx.strokeStyle = '#ffd08a'; ctx.lineWidth = 1.4;
+    ctx.beginPath(); ctx.moveTo(px - wide / 2, pb); ctx.lineTo(px + wide / 2, pb); ctx.stroke();
+  }
+  // 文字只写给焦点那条，否则几条叠在一起会糊掉
+  if (focus && focus.t >= TL.sieveEnd) {
+    const pb = plateBottom(RANK[focus.ceiling]);
+    const px = SHAFT_CX + laneDx(focus.lane);
+    if (focus.hitCeiling || RANK[focus.planned] > RANK[focus.ceiling]) {
+      mono('天花板：' + focus.ceiling.replace('_', ' '), px, pb - 28, '#ff9f1c', 12, 'center');
+      if (RANK[focus.planned] > RANK[focus.ceiling]) {
+        mono('计划 ' + focus.planned.replace('_', ' ') + ' 被压住', px, pb - 44, '#8a5a1c', 11, 'center');
+      }
+    }
+  }
+
+  // 人类托架（L4 用）
+  const hx = BAY_X1 - 90, hy2 = levelY(4) - 78;
+  ctx.strokeStyle = '#c678ff'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.arc(hx, hy2, 14, 0, 6.284); ctx.stroke();
+  ctx.beginPath(); ctx.arc(hx, hy2 - 5, 4.5, 0, 6.284); ctx.stroke();
+  ctx.beginPath(); ctx.arc(hx, hy2 + 8, 8, Math.PI * 1.15, Math.PI * 1.85); ctx.stroke();
+  label('交给人批准', hx, hy2 + 30, '#8a5ab8', 11);
+}
+
+function drawProse(time) {
+  // 通道
+  ctx.strokeStyle = '#141d29'; ctx.lineWidth = 1;
+  ctx.setLineDash([5, 9]);
+  ctx.beginPath(); ctx.moveTo(120, PROSE_Y); ctx.lineTo(1400, PROSE_Y); ctx.stroke();
+  ctx.setLineDash([]);
+  label('正文通道 · assistant-stream（不经过任何工具）', 140, PROSE_Y - 46, '#2b3a4f', 12, 'left');
+
+  // 扫描器
+  const sx = 980;
+  const glow = 0.5 + 0.5 * Math.sin(time * 4);
+  ctx.strokeStyle = 'rgba(120,160,220,' + (0.25 + glow * 0.3) + ')';
+  ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.moveTo(sx, PROSE_Y - 54); ctx.lineTo(sx, PROSE_Y + 54); ctx.stroke();
+  ctx.fillStyle = 'rgba(120,160,220,0.06)';
+  ctx.fillRect(sx - 26, PROSE_Y - 54, 52, 108);
+  label('claim 检测', sx, PROSE_Y + 74, '#2b3a4f', 10.5);
+}
+
+function drawBubbles() {
+  for (const b of bubbles) {
+    ctx.font = '12.5px "Segoe UI","Microsoft YaHei",system-ui,sans-serif';
+    const w = ctx.measureText(b.text).width + 26;
+    const flagged = b.flagged;
+    ctx.globalAlpha = Math.max(0, Math.min(1, (b.x + 300) / 340)) * (flagged ? 1 : 0.72);
+    ctx.fillStyle = flagged ? 'rgba(60,18,18,0.92)' : 'rgba(16,24,36,0.92)';
+    ctx.strokeStyle = flagged ? '#ff5f57' : '#22304a';
+    ctx.lineWidth = flagged ? 2 : 1.4;
+    rrect(b.x - w / 2, b.y - 15, w, 30, 15); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = flagged ? '#ffb3ad' : '#9fb0c6';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(b.text, b.x, b.y);
+    if (flagged) {
+      // 尾巴指向举升塔
+      ctx.strokeStyle = '#ff5f57'; ctx.lineWidth = 1.4;
+      ctx.beginPath(); ctx.moveTo(b.x + w / 2, b.y); ctx.lineTo(b.x + w / 2 + 22, b.y); ctx.stroke();
+    }
+    ctx.globalAlpha = 1;
+  }
+  for (const f of flags) {
+    const a = Math.max(0, 1 - f.age / f.life);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = '#ff5f57';
+    ctx.beginPath();
+    ctx.moveTo(f.x, f.y); ctx.lineTo(f.x, f.y + 26); ctx.lineTo(f.x - 16, f.y + 13);
+    ctx.closePath(); ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+}
+
+function drawChips() {
+  for (const c of chips) {
+    if (c.age < 0) continue;
+    const color = c.level === 'A' ? '#37d39a' : c.level === 'B' ? '#4aa8ff' : '#8892a4';
+    const fade = c.rest > 0.9 ? Math.max(0, 1 - (c.rest - 0.9) / 0.5) : 1;
+    ctx.save();
+    ctx.globalAlpha = fade;
+    ctx.translate(c.x, c.y); ctx.rotate(c.rot);
+    if (c.solid) {
+      ctx.fillStyle = color;
+      rrect(-c.r, -c.r, c.r * 2, c.r * 2, 3); ctx.fill();
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.font = 'bold 11px ui-monospace,Consolas,monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(c.level, 0, 0.5);
+    } else {
+      ctx.globalAlpha = 0.42 * fade;
+      ctx.strokeStyle = color; ctx.lineWidth = 1.6; ctx.setLineDash([3, 3]);
+      ctx.beginPath(); ctx.arc(0, 0, c.r, 0, 6.284); ctx.stroke(); ctx.setLineDash([]);
+      ctx.fillStyle = color;
+      ctx.font = 'bold 10px ui-monospace,Consolas,monospace';
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText('C', 0, 0.5);
+      ctx.globalAlpha = fade;
+    }
+    ctx.restore();
+  }
+}
+
+function drawCalls(time, state) {
+  for (const c of calls) {
+    // 幽灵：本来会说到哪一层
+    if (c.t > TL.sieveEnd && RANK[c.planned] > RANK[c.delivered]) {
+      const gx = SHAFT_CX + laneDx(c.lane);
+      const gy = levelY(RANK[c.planned]) - R - 8 - 26;
+      ctx.setLineDash([4, 5]);
+      ctx.strokeStyle = 'rgba(255,159,28,0.55)'; ctx.lineWidth = 1.6;
+      ctx.beginPath(); ctx.arc(gx, gy, R, 0, 6.284); ctx.stroke();
+      ctx.setLineDash([]);
+      mono('本来会说：' + c.planned.replace('_', ' '), gx, gy - 26, 'rgba(255,159,28,0.75)', 11.5, 'center');
+    }
+
+    // 身份光环
+    const actorColor = c.scn.actor === 'captain' ? '#ffc451' : c.scn.actor === 'member' ? '#4aa8ff' : '#5d6b83';
+    const body = c.kind === 'deny' ? '#ff5f57' : c.kind === 'ask' ? '#c678ff' : c.kind === 'continue' ? '#ffc451' : '#4aa8ff';
+    const sq = 1 + c.squash * 0.35, sqx = 1 - c.squash * 0.22;
+
+    ctx.save();
+    ctx.translate(c.x, c.y);
+    ctx.scale(sqx, sq);
+
+    // 尾迹
+    if (c.phase === 'lift' || c.phase === 'out') {
+      for (let i = 1; i <= 4; i++) {
+        ctx.globalAlpha = 0.09 * (5 - i);
+        ctx.fillStyle = body;
+        ctx.beginPath(); ctx.arc(0, i * 7, R * (1 - i * 0.12), 0, 6.284); ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // 证据脉冲
+    if (c.pulse > 0) {
+      ctx.globalAlpha = c.pulse * 0.8;
+      ctx.strokeStyle = '#37d39a'; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.arc(0, 0, R + 8 + (1 - c.pulse) * 16, 0, 6.284); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    const g = ctx.createRadialGradient(-4, -5, 2, 0, 0, R);
+    g.addColorStop(0, '#ffffff55'); g.addColorStop(1, body);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(0, 0, R, 0, 6.284); ctx.fill();
+    ctx.strokeStyle = actorColor; ctx.lineWidth = 2.4;
+    ctx.beginPath(); ctx.arc(0, 0, R + 1.5, 0, 6.284); ctx.stroke();
+
+    // 缺口徽记
+    if (c.gaps.length > 0 && c.revealed.includes('ev')) {
+      ctx.fillStyle = c.gaps.some(x => GAPS[x.kind].sev === 'blocker') ? '#ff5f57' : '#ffc451';
+      ctx.beginPath(); ctx.arc(R - 3, -R + 3, 6.5, 0, 6.284); ctx.fill();
+      ctx.fillStyle = '#0a0d12'; ctx.font = 'bold 9px ui-monospace'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(String(c.gaps.length), R - 3, -R + 3.5);
+    }
+    ctx.restore();
+
+    // 工具名徽标
+    if (c.revealed.includes('point')) {
+      const nm = c.scn.tool || 'assistant-prose';
+      ctx.font = '11.5px ui-monospace,Consolas,monospace';
+      const w = ctx.measureText(nm).width + 18;
+      ctx.fillStyle = 'rgba(10,16,24,0.9)'; ctx.strokeStyle = '#2a3a52'; ctx.lineWidth = 1;
+      rrect(c.x - w / 2, c.y - R - 32, w, 20, 4); ctx.fill(); ctx.stroke();
+      mono(nm, c.x, c.y - R - 22, '#9fb0c6', 11.5, 'center');
+      const pt = c.point;
+      label(POINTS[pt].title, c.x, c.y - R - 46, '#63718a', 11.5);
+    }
+
+    // 气泡提示
+    if (c.toastT > 0 && c.toast) {
+      ctx.globalAlpha = Math.min(1, c.toastT / 0.5);
+      ctx.font = '12px "Segoe UI","Microsoft YaHei",system-ui,sans-serif';
+      const w = ctx.measureText(c.toast).width + 20;
+      ctx.fillStyle = 'rgba(14,22,34,0.94)'; ctx.strokeStyle = '#2a3a52'; ctx.lineWidth = 1;
+      rrect(c.x - w / 2, c.y + R + 12, w, 24, 6); ctx.fill(); ctx.stroke();
+      label(c.toast, c.x, c.y + R + 24, '#c8d4e4', 12);
+      ctx.globalAlpha = 1;
+    }
+
+    // 拦停时的钢门
+    if (c.kind === 'deny' && c.doorT > 0 && c.doorT < 1) {
+      const y = levelY(RANK[c.delivered]) - 40;
+      const h = 70;
+      const gy = y - (1 - c.doorT) * 130;
+      const g2 = ctx.createLinearGradient(0, gy - h, 0, gy);
+      g2.addColorStop(0, '#7c2b28'); g2.addColorStop(1, '#ff5f57');
+      ctx.fillStyle = g2;
+      ctx.fillRect(SHAFT_X0 + 18, gy - h, SHAFT_X1 - SHAFT_X0 - 36, h);
+      ctx.strokeStyle = '#ffb3ad'; ctx.lineWidth = 2;
+      ctx.strokeRect(SHAFT_X0 + 18, gy - h, SHAFT_X1 - SHAFT_X0 - 36, h);
+    }
+  }
+}
+
+function drawSparks() {
+  for (const s of sparks) {
+    const a = Math.max(0, 1 - s.age / s.life);
+    ctx.globalAlpha = a;
+    ctx.fillStyle = 'hsl(' + s.hue + ',100%,' + (52 + 34 * a) + '%)';
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.r * a, 0, 6.284); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+function stepSparks(dt) {
+  for (const s of sparks) {
+    s.age += dt; s.vy += G * 0.55 * dt; s.x += s.vx * dt; s.y += s.vy * dt; s.vx *= 0.985;
+  }
+  for (let i = sparks.length - 1; i >= 0; i--) if (sparks[i].age > sparks[i].life) sparks.splice(i, 1);
+}
+
+/* =====================================================================
+   六、状态与 UI
+   ===================================================================== */
+
+const state = {
+  mode: 'enforce', narrativeWatch: 'steer', roleAwareness: 'enforce',
+  rules: [], speed: 1, running: true,
+  // 「同屏呼入」：允许同时在途几条。0 表示同一时刻只有一条走完全程。
+  burst: 2,
+  current: null,          // 面板上「本次判定」盯着的那一条（焦点）
+  gapCounts: {}, levelCounts: {}, nextSpawn: 0,
+  // 并发需要的东西：车道发号器、与某条调用无关的账本两栏、结算计数、在途峰值
+  laneSeq: 0, totals: { credited: 0, discarded: 0 },
+  doneCalls: 0, cleanCount: 0, burstPeak: 0,
+};
+// 面板 DOM 只在内容真的变了才写：并发时每帧都重写 336px 宽的侧栏会肉眼可见地卡。
+let tallyDirty = true;
+let inflightDirty = true;
+
+const liveCalls = () => calls.filter((c) => !c.done);
+const inflightLimit = () => Math.max(1, state.burst + 1);
+const MODE_NOTE = {
+  off: '什么都不注册。装上但不打开，行为与没装完全一样。',
+  'dry-run': '天花板压到地面：只会记账，永远不会真的拦停或提醒。虚线幽灵显示"本来会说多狠"。',
+  advisory: '能把 L3 拦停 / L4 交人削成 L1 附注——能提醒，但永远不拦。',
+  enforce: '完整阶梯：L3 真的拒绝，L4 真的交给人。',
+  lockdown: '所有决策点的天花板不超过 L1，只准只读式提醒。',
+};
+
+const el = (id) => document.getElementById(id);
+
+function buildButtons() {
+  const sc = el('scenarios');
+  sc.innerHTML = '';
+  SCENARIOS.forEach((s, i) => {
+    const b = document.createElement('button');
+    b.innerHTML = '<span>' + s.label + '</span><span class="k">' + s.sub + '</span>';
+    b.onclick = () => runOne(s);
+    sc.appendChild(b);
+  });
+  const seg = (host, values, key, labels) => {
+    host.innerHTML = '';
+    values.forEach(v => {
+      const b = document.createElement('button');
+      b.textContent = labels ? labels[v] : v;
+      b.className = state[key] === v ? 'on' : '';
+      b.onclick = () => { state[key] = v; buildButtons(); refreshModeNote(); if (key === 'mode') reExplainAll(); };
+      host.appendChild(b);
+    });
+  };
+  seg(el('modes'), ['off', 'dry-run', 'advisory', 'enforce', 'lockdown'], 'mode',
+    { off: '关闭', 'dry-run': '只记账', advisory: '只提醒', enforce: '完整', lockdown: '只读' });
+  seg(el('narratives'), ['off', 'note', 'steer', 'deny'], 'narrativeWatch',
+    { off: '不管', note: '记下', steer: '推回', deny: '拒绝' });
+  seg(el('roles'), ['off', 'observe', 'enforce'], 'roleAwareness',
+    { off: '不查', observe: '观察', enforce: '强制' });
+  el('toggle').textContent = state.running ? '暂停' : '继续';
+  el('burstRd').textContent = inflightLimit() + ' 条';
+}
+function refreshModeNote() { el('modeNote').textContent = MODE_NOTE[state.mode]; }
+
+/* rules：按决策点压低天花板。这正是宿主 configuredCeilingFor 在干的事，
+ * 所以面板上这两个下拉框不是装饰——它会真的改变井道里那块橙色天花板的高度。 */
+function buildRules() {
+  const pt = el('rulePoint'), lv = el('ruleLevel');
+  if (!pt.options.length) {
+    for (const id of Object.keys(POINTS)) {
+      const o = document.createElement('option');
+      o.value = id; o.textContent = id + ' · ' + POINTS[id].title;
+      pt.appendChild(o);
+    }
+    for (const level of LEVELS) {
+      const o = document.createElement('option');
+      o.value = level; o.textContent = level + ' · ' + LEVEL_CN[level];
+      lv.appendChild(o);
+    }
+    pt.value = 'completion_report';
+    lv.value = 'L1_note';
+    el('ruleAdd').onclick = () => {
+      const pointId = pt.value, ceiling = lv.value;
+      state.rules = state.rules.filter((r) => r.pointId !== pointId);
+      state.rules.push({ pointId, ceiling });
+      buildRules(); reExplainAll();
+      toast('rules：把 ' + pointId + ' 压到 ' + ceiling);
+    };
+  }
+  const host = el('ruleList');
+  if (!state.rules.length) {
+    host.textContent = '没有规则：每个点都用目录（catalog）里的天花板。';
+    return;
+  }
+  host.innerHTML = '';
+  state.rules.forEach((r, i) => {
+    const d = document.createElement('div');
+    d.innerHTML = '<code>' + r.pointId + '</code> ≤ ' + r.ceiling +
+      '（目录值 ' + POINTS[r.pointId].ceiling + '）<a href="#" data-i="' + i + '">删掉</a>';
+    host.appendChild(d);
+  });
+  host.querySelectorAll('a').forEach((a) => {
+    a.onclick = (e) => {
+      e.preventDefault();
+      state.rules.splice(parseInt(a.getAttribute('data-i'), 10), 1);
+      buildRules(); reExplainAll();
+    };
+  });
+}
+
+function toast(msg) {
+  const t = el('toast');
+  t.textContent = msg; t.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => t.classList.remove('show'), 1600);
+}
+
+/* 生成一条调用，并把它设为面板焦点。runOne 是"用户点名让谁闯关"，
+ * maybeSpawn 是"自动续演时从那些还没有人在途的剧本里抽一个"。 */
+function spawn(s) {
+  const c = spawnCall(s, state);
+  state.current = c;
+  inflightDirty = true;
+  renderVerdict();
+  return c;
+}
+function runOne(s) {
+  const c = spawn(s);
+  c.revealed = [];
+  state.nextSpawn = Math.max(state.nextSpawn, 2.4);
+  toast(s.label + ' → ' + POINTS[s.point].title);
+}
+// 焦点：当前这条只要还活着就一直是它；它走完了才挪到最新的那条在途调用上。
+function pickFocus() {
+  if (state.current && !state.current.done) return;
+  const live = liveCalls();
+  const next = live.length ? live[live.length - 1] : null;
+  if (next !== state.current) inflightDirty = true;
+  state.current = next;
+}
+function maybeSpawn() {
+  const live = liveCalls();
+  if (live.length >= inflightLimit()) return false;
+  const busy = new Set(live.map((c) => c.scn.key));
+  let pool = SCENARIOS.filter((s) => !busy.has(s.key));
+  if (state.narrativeWatch === 'off') pool = pool.filter((s) => s.key !== 'prose');
+  if (!pool.length) return false;
+  spawn(pool[Math.floor(Math.random() * pool.length)]);
+  return true;
+}
+// 一条调用交付完成时结算，settled 保证同一条不会被记两次。
+function settleCall(c) {
+  if (c.settled) return;
+  c.settled = true;
+  state.doneCalls++;
+  state.levelCounts[c.delivered] = (state.levelCounts[c.delivered] || 0) + 1;
+  if (c.gaps.length === 0) state.cleanCount++;
+  for (const g of c.gaps) state.gapCounts[g.kind] = (state.gapCounts[g.kind] || 0) + 1;
+  tallyDirty = true;
+}
+function renderInflight() {
+  const host = el('inflight');
+  const live = liveCalls();
+  host.innerHTML = '';
+  if (!live.length) {
+    host.innerHTML = '<span style="color:#4a5a72;font-size:11.5px">此刻没有在途调用</span>';
+    return;
+  }
+  live.forEach((c) => {
+    const b = document.createElement('button');
+    b.className = 'fc' + (c === state.current ? ' on' : '');
+    b.innerHTML = '<span class="t">' + c.scn.label + '</span>' +
+      '<span class="l lvl ' + c.delivered + '">' + c.delivered.replace('_', ' ') + '</span>';
+    b.onclick = () => { state.current = c; inflightDirty = true; renderVerdict(); renderInflight(); };
+    host.appendChild(b);
+  });
+}
+function renderTally() {
+  const host = el('tally');
+  const rows = [['已交付的调用', state.doneCalls], ['其中无缺口', state.cleanCount]];
+  for (const lv of LEVELS) rows.push(['投递为 ' + lv.replace('_', ' '), state.levelCounts[lv] || 0]);
+  rows.push(['计入判定的证据', state.totals.credited]);
+  rows.push(['自述被丢进弃料桶', state.totals.discarded]);
+  let html = rows.map((r) => '<span>' + r[0] + '</span><span>' + r[1] + '</span>').join('');
+  const gs = Object.keys(state.gapCounts).filter((k) => state.gapCounts[k] > 0)
+    .sort((a, b) => state.gapCounts[b] - state.gapCounts[a]).slice(0, 4);
+  if (gs.length) {
+    html += '<span style="color:#63718a">最常见的缺口</span><span></span>';
+    for (const k of gs) html += '<span style="color:#63718a">' + k + '</span><span>' + state.gapCounts[k] + '</span>';
+  }
+  host.innerHTML = html;
+}
+
+function renderVerdict() {
+  const c = state.current;
+  const v = el('verdict');
+  if (!c) { v.innerHTML = '<span style="color:#63718a">等待一次调用…</span>'; return; }
+  const lv = (x) => '<span class="lvl ' + x + '">' + x.replace('_', ' ') + '</span>';
+  const gapHtml = c.gaps.length === 0
+    ? '<span style="color:#37d39a">无缺口</span>'
+    : c.gaps.map(g => '<span class="gapchip sev-' + GAPS[g.kind].sev + '">' + g.kind + ' · ' + GAPS[g.kind].cn + '</span>').join('');
+  v.innerHTML =
+    '<div class="big ' + 'lvl ' + c.delivered + '">' + LEVEL_CN[c.delivered] + ' <span style="font-size:12px;color:#63718a">' + c.delivered + '</span></div>' +
+    '<dl>' +
+    '<dt>工具</dt><dd class="lvl" style="color:#9fb0c6">' + (c.scn.tool || 'assistant-prose（正文）') + '</dd>' +
+    '<dt>决策点</dt><dd>' + POINTS[c.point].title + ' <span class="lvl" style="color:#4a5a72">' + c.point + '</span></dd>' +
+    '<dt>身份</dt><dd>' + ({ captain: '队长 captain', member: '队员 member', any: '任何人 any' }[c.scn.actor] || c.scn.actor) + ' · ' + c.scn.team + '</dd>' +
+    '<dt>状态</dt><dd>' + STATUS_CN[c.status] +
+    (c.realStatus && c.realStatus !== c.status
+      ? ' <span style="color:#ff9f1c">（原判 ' + STATUS_CN[c.realStatus] + '，但没有基线，所以按 insufficient 走计划）</span>' : '') + '</dd>' +
+    '<dt>缺口</dt><dd>' + gapHtml + '</dd>' +
+    '<dt>地板</dt><dd>' + lv(c.floor) + '</dd>' +
+    '<dt>天花板</dt><dd>' + lv(c.ceiling) + (c.ceiling !== POINTS[c.point].ceiling ? ' <span style="color:#ff9f1c">（被压低）</span>' : '') + '</dd>' +
+    '<dt>计划</dt><dd>' + lv(c.planned) + '</dd>' +
+    '<dt>投递</dt><dd>' + lv(c.delivered) + '</dd>' +
+    '<dt>动作</dt><dd>' + c.action + '</dd>' +
+    '</dl>' +
+    '<div class="note">' + c.scn.story + (c.forcedNote ? '<br><b style="color:#ff9f1c">' + c.forcedNote + '</b>' : '') + '</div>';
+}
+
+/* 改 mode / rules 之后重新判一遍。
+ * 注意这里的取舍：真实门禁是"下一次拦截才用新配置"，而演示里为了让改动看得见，
+ * 把还在场上的调用也重判了，并把已经过了举升段的退回去重演一次交付。 */
+function reExplainCall(c) {
+  const p = planLevel(c.point, c.status, c.scn.key === 'nobaseline' ? [] : c.gaps, state.rules, state.mode);
+  c.planned = p.planned; c.delivered = p.delivered; c.ceiling = p.ceiling; c.floor = p.floor;
+  c.kind = LEVEL_KIND[p.delivered]; c.action = LEVEL_ACTION[p.delivered];
+  c.hitCeiling = false; c.hatchOpen = 0; c.doorT = 0;
+  if (c.t > TL.liftEnd) c.t = TL.liftEnd;
+}
+function reExplainAll() {
+  for (const c of calls) if (!c.settled) reExplainCall(c);
+  renderVerdict(); renderInflight(); renderTally();
+}
+
+el('speed').oninput = (e) => { state.speed = parseFloat(e.target.value); };
+el('burst').oninput = (e) => {
+  state.burst = parseInt(e.target.value, 10);
+  el('burstRd').textContent = inflightLimit() + ' 条';
+  // 调小上限不会打断已经在途的那几条——它们已经发出去了；只是不再放新的进来。
+};
+el('toggle').onclick = () => { state.running = !state.running; buildButtons(); };
+document.addEventListener('keydown', (e) => {
+  if (e.code === 'Space') { e.preventDefault(); state.running = !state.running; buildButtons(); }
+  if (e.code === 'ArrowRight') {
+    const i = SCENARIOS.findIndex((s) => s.key === (state.current && state.current.scn.key));
+    runOne(SCENARIOS[(i + 1) % SCENARIOS.length]);
+  }
+});
+
+/* =====================================================================
+   七、主循环
+   ===================================================================== */
+
+let last = performance.now(), time = 0, sinceBubble = 0, lastFocus = null;
+function frame(now) {
+  let dt = (now - last) / 1000; last = now;
+  dt = Math.min(dt, 1 / 30);
+  const sdt = dt * (state.running ? state.speed : 0);
+  time += sdt;
+
+  // 物理子步，保证碰撞稳定
+  const steps = 3, h = sdt / steps;
+  for (let i = 0; i < steps; i++) {
+    stepMesh(h);
+    stepChips(h);
+    stepBubbles(h, state);
+    for (const c of calls) stepCall(c, h, state);
+    stepSparks(h);
+  }
+
+  // 结算：交付完的调用先记账再离场。证据的归属在碎片自己身上，所以
+  // 即使这条调用已经不在场，它的账也已经落定了。
+  state.burstPeak = Math.max(state.burstPeak, liveCalls().length);
+  for (let i = calls.length - 1; i >= 0; i--) {
+    if (!calls[i].done) continue;
+    settleCall(calls[i]);
+    calls.splice(i, 1);
+    inflightDirty = true;
+  }
+  pickFocus();
+
+  // 自动续演：在途条数没到上限就再放一条进来
+  if (state.running) {
+    state.nextSpawn -= sdt;
+    if (state.nextSpawn <= 0) {
+      state.nextSpawn = maybeSpawn() ? 1.9 + Math.random() * 2.0 : 0.35;
+    }
+    // 环境正文
+    sinceBubble -= sdt;
+    if (sinceBubble <= 0) {
+      spawnBubble(AMBIENT[Math.floor(Math.random() * AMBIENT.length)]);
+      sinceBubble = 2.6 + Math.random() * 3.4;
+    }
+  }
+
+  // 面板：只在真的变了才重写
+  if (tallyDirty) { renderTally(); tallyDirty = false; }
+  if (inflightDirty) { renderInflight(); inflightDirty = false; }
+  if (state.current !== lastFocus) { lastFocus = state.current; renderVerdict(); }
+
+  // 撞击时轻微震屏
+  let shake = 0;
+  for (const c of calls) shake = Math.max(shake, c.shake);
+  const ox = (Math.random() - .5) * shake * 12, oy = (Math.random() - .5) * shake * 12;
+
+  ctx.save();
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  ctx.translate(offX + ox, offY + oy); ctx.scale(scale, scale);
+
+  bg();
+  drawProse(time);
+  drawBubbles();
+  drawStations(time);
+  drawSieve(time);
+  drawChips();
+  drawTower(time);
+  drawBelt(time);
+  drawCalls(time, state);
+  drawSparks();
+
+  // 图例
+  ctx.globalAlpha = 0.85;
+  label('A 门禁亲自观察', 1120, H - 92, '#37d39a', 12, 'left');
+  label('B 预声明谓词实测', 1120, H - 74, '#4aa8ff', 12, 'left');
+  label('C 自述 / 工具参数（不计入判定）', 1120, H - 56, '#8892a4', 12, 'left');
+  label('橙色 = 本次天花板　虚线圆 = 本来会说多狠　钢门 = 真的拦停', 1120, H - 32, '#63718a', 11.5, 'left');
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  requestAnimationFrame(frame);
+}
+
+/* 启动 */
+resize();
+buildButtons();
+refreshModeNote();
+buildRules();
+spawn(SCENARIOS[3]);          // 先用「只有自述」开场
+sinceBubble = 1.4;
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

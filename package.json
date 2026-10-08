@@ -1,0 +1,83 @@
+{
+  "name": "dsh-jev-gate",
+  "version": "1.0.0",
+  "description": "跨团队的裁决与优雅干预层 for DeepSeek Harness：不看自述，只看冻结基线与实测证据；在团队的十四个决策点上分级拦停或交人。",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/types/index.d.ts",
+  "license": "MIT",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "jev",
+    "gate",
+    "self-verification",
+    "agent-team",
+    "arbiter"
+  ],
+  "engines": {
+    "node": "^22.19.0 || >=24.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./client/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "host",
+    "client",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "test:logic": "node scripts/run-logic-tests.mjs",
+    "test:host": "node scripts/run-host-tests.mjs",
+    "test:client": "node scripts/run-client-tests.mjs",
+    "test:visualize": "node scripts/run-visualize-tests.mjs",
+    "test:render": "node scripts/run-render-tests.mjs",
+    "check:contract": "node scripts/run-contract-check.mjs",
+    "check:secrets": "node scripts/run-secret-scan.mjs",
+    "check:libsync": "node scripts/run-lib-sync.mjs",
+    "gates": "npm run typecheck && npm run test:logic && npm run test:host && npm run test:client && npm run test:visualize && npm run test:render && npm run check:contract && npm run check:secrets && npm run build && npm run check:libsync"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
+    }
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.4",
+    "@deepseek-ai/dsh-agent": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-scope": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-user-approval": "0.2.0-rc.2",
+    "@deepseek-ai/dsh-util-values": "0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "3.18.4",
+    "@types/node": "24.13.3",
+    "esbuild": "0.28.2",
+    "typescript": "5.9.3"
+  }
+}

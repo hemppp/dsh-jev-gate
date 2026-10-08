@@ -1,0 +1,11 @@
+node_modules/
+lib/
+.tmp/
+# The lib-freshness gate compiles into this tree. It has to sit one level below the
+# repository root (same depth as lib/) so tsc emits comparable sourcemap `sources`.
+.tmp-libsync/
+*.tsbuildinfo
+.dsh-jev-gate/
+.env
+.env.*
+!.env.example
