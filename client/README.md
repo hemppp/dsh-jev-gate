@@ -17,11 +17,29 @@ browser bundle carries no Node-only code.
 
 ## What it renders
 
-One configuration panel, registered into the slot **`plugins.row.config`** under
-the key **`dsh-jev-gate#dsh-jev-gate`** (`<package name>#<cordis row id>`; both are
-`dsh-jev-gate`). The panel is registered only while the host actually serves the
-settings namespace `dsh-jev-gate`, so a deployment that does not configure this
-plugin never grows an empty page.
+One configuration page, registered into the Settings slot
+**`settings.plugins.tab`** as a list entry with id **`jev-gate`**, order **20** and
+label `t('title')`. That slot is the sole child the host's built-in Plugins section
+(`settings.section` id `plugins`, from `@deepseek-ai/dsh-client-ui-settings-plugins`)
+declares: the section reads the slot ledger, turns each entry's `id` / `order` /
+`label` into one tab of its own tab bar, and renders the matching registration as
+the tab panel. Registering there gives a localized, chrome'd tab without writing a
+section of our own; the section owns the navigation entry, heading and tab strip,
+this page owns only the form.
+
+The three Plugins *management* slots — `plugins.item`, `plugins.bundle.config`,
+`plugins.row.config`, all rendered by `@deepseek-ai/dsh-client-ui-plugin-manager` —
+are deliberately left empty: configuration belongs in Settings, and duplicating it
+onto the install/uninstall page would be two forms to keep in step.
+
+Because the tab is a list entry, the registration carries `id`/`order`/`label`
+instead of the keyed `key` a `plugins.row.config` entry used to carry, and the
+component no longer branches on `props.view` — there is no summary/page axis on
+this slot, so the page renders the full form unconditionally.
+
+The page is registered only while the host actually serves the settings namespace
+`dsh-jev-gate` (`configForms.whileServed`), so a deployment that does not
+configure this plugin never grows an empty tab.
 
 Required services (`inject`):
 `['slots', 'locale', 'remote', 'remote.credentials', 'configForms']`.
@@ -117,8 +135,8 @@ An override may only ever *lower* force, never raise it:
 
 ## Exports (from the factory)
 
-`NS`, `ENTRY_NS`, `ROW_KEY`, `SLOT`, `FIELDS`, `DECISION_POINTS`, `SECRET_FIELDS`,
-`REF_FIELD`, `MODE_OPTIONS`, `KIND_OPTIONS`, `AUTHORITY_OPTIONS`,
+`NS`, `ENTRY_NS`, `TAB_ID`, `TAB_ORDER`, `SLOT`, `FIELDS`, `DECISION_POINTS`,
+`SECRET_FIELDS`, `REF_FIELD`, `MODE_OPTIONS`, `KIND_OPTIONS`, `AUTHORITY_OPTIONS`,
 `UNAVAILABLE_OPTIONS`, `ROLE_AWARENESS_OPTIONS`, `NARRATIVE_OPTIONS`, `apply`,
 `inject`.
 

@@ -812,12 +812,19 @@ check(sameJson(panel.log.servedNs, [api.ENTRY_NS]), `whileServed 应以 ${api.EN
 check(sameJson(panel.log.formNs, [api.ENTRY_NS]), `configForms.get 应取 ${api.ENTRY_NS}`)
 check(sameJson(panel.log.slotInjections, [api.SLOT]), `槽位名应为 ${api.SLOT}`)
 check(panel.log.registered.length === 1, `槽位应只注册一条记录，实际 ${panel.log.registered.length}`)
-check(panel.entry.record.key === api.ROW_KEY, `记录 key 应为 ${api.ROW_KEY}，实际 ${String(panel.entry.record.key)}`)
+check(panel.entry.record.id === api.TAB_ID, `记录 id 应为 ${api.TAB_ID}，实际 ${String(panel.entry.record.id)}`)
+check(panel.entry.record.order === api.TAB_ORDER, `记录 order 应为 ${api.TAB_ORDER}，实际 ${String(panel.entry.record.order)}`)
+check(typeof panel.entry.record.label === 'function', '记录应提供 label()（设置页据此排标签页）')
+check(
+  panel.entry.record.label() === panel.locale.locale.bind(api.NS)('title'),
+  `记录 label() 应解析到本插件字典的 title，实际 ${JSON.stringify(panel.entry.record.label())}`,
+)
 check(panel.entry.record.locale === api.NS, '记录应声明自己的字典命名空间')
 check(panel.entry.record.name === api.SLOT, '记录 name 应等于槽位名')
+check(panel.entry.record.key === undefined, '设置页标签槽是 list 槽位，不应再带 keyed 槽位的 key')
 check(typeof panel.entry.component === 'function', '槽位应注册一个组件函数')
 check(
-  sameJson(panel.log.effects, ['dsh-jev-gate: dictionaries', 'dsh-jev-gate: form subscription', 'dsh-jev-gate: credential invalidations', 'dsh-jev-gate: row page']),
+  sameJson(panel.log.effects, ['dsh-jev-gate: dictionaries', 'dsh-jev-gate: form subscription', 'dsh-jev-gate: credential invalidations', 'dsh-jev-gate: settings tab']),
   `effect 清单不符：${JSON.stringify(panel.log.effects)}`,
 )
 check(
@@ -842,16 +849,16 @@ check(
 }
 
 /* ================================================================== *
- * 6. summary 视图
+ * 6. 宿主不再分发 view：设置页只渲染这一种整页
  * ================================================================== */
 
 {
-  const summary = mountPanel(probeScope, { view: 'summary' })
-  const rendered = summary.render()
-  check(typeof rendered === 'string', 'summary 视图应直接返回一个字符串（不是元素树）')
+  // 旧实现把 props.view 当开关（summary 返回一句描述）。设置页标签没有这个
+  // 维度，页面必须无视任何 view 值都渲染完整表单，否则一次误传就变成空白页。
+  const anyView = mountPanel(probeScope, { view: 'summary' })
   check(
-    rendered === summary.locale.locale.bind(api.NS)('description'),
-    `summary 视图应返回 description 文案，实际 ${JSON.stringify(rendered)}`,
+    typeof anyView.render() === 'object' && anyView.render() !== null,
+    '设置页标签不认 view：任何 view 值都应渲染完整表单，而不是退化成字符串',
   )
 }
 

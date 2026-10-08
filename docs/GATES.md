@@ -109,7 +109,7 @@ import 被换成 `Proxy` 桩（模块级解构与 `class extends` 都能活下�
 
 **它证明不了的事**：它用桩替掉了 slot / locale / configForms / credentials 域，所以它本身
 **不是**渲染测试。配置面板的真实渲染由 `scripts/run-render-tests.mjs` 负责（见第四之三节）。
-它当前的实测结果是 `OK run-client-tests: 67 assertions passed`；写作期间它曾
+它当前的实测结果是 `OK run-client-tests: 71 assertions passed`；写作期间它曾
 因为客户端在缺失表单时不降级而失败（见第七节第 3 条），这正好说明这一层不是空转。
 
 ---
@@ -148,7 +148,7 @@ simple-icons / micromark 系等 15+ 外部包，还带 30+ 个 CSS module——�
 依赖浏览器工具链，与「门禁只依赖 `node` 和本包已装依赖」这条底线冲突。
 
 **所以它证明不了的事**：CSS 观感、焦点顺序、真实浏览器对 `aria-*` 的播报。真机安装验证才管这些，
-本轮明确不在范围内。当前实测：`OK run-render-tests: 155 条断言全通过`。
+本轮明确不在范围内。当前实测：`OK run-render-tests: 158 条断言全通过`。
 它抓到过一条真缺陷——`inject()` 只把 `form.actions()` 原样交出去，改凭据引用名时不重新读凭据状态，
 于是**徽章会对一个已经配了密钥的引用名谎报"还没有密钥"**（见第七之二节第 8 条）。
 
@@ -260,9 +260,9 @@ scanned"。五个检测器：
 | `typecheck` | 0 | 无输出 |
 | `test:logic` | 0 | `OK run-logic-tests: 239 assertions passed` |
 | `test:host` | 0 | `OK run-host-tests: 153 assertions passed` |
-| `test:client` | 0 | `OK run-client-tests: 67 assertions passed` |
+| `test:client` | 0 | `OK run-client-tests: 71 assertions passed` |
 | `test:visualize` | 0 | `OK run-visualize-tests: 50 assertions passed` |
-| `test:render` | 0 | `OK run-render-tests: 155 条断言全通过（配置面板真实渲染：结构、保存、密钥、降级态）` |
+| `test:render` | 0 | `OK run-render-tests: 158 条断言全通过（配置面板真实渲染：结构、保存、密钥、降级态）` |
 | `check:contract` | 0 | `OK run-contract-check: 11 contract assertions passed` |
 | `check:secrets` | 0 | `OK run-secret-scan: 33 file(s) scanned, 0 findings, 0 process.env reads, 146 exemption(s)` |
 | `build` | 0 | 无输出（产出 `lib/`） |
@@ -321,7 +321,7 @@ enforce 的差别、dry-run 下全部 14 个决策点、决策点天花板、`hi
 
 ### 3. `test:client`——曾经抓到的两个真实缺陷（现已修好，留档）
 
-**状态：已修好；现在是 `OK run-client-tests: 67 assertions passed`。** 当时这次失败是
+**状态：已修好；现在是 `OK run-client-tests: 71 assertions passed`。** 当时这次失败是
 **有信息量**的：客户端测试跑到了真实代码，并报出
 
 ```
@@ -572,5 +572,6 @@ npm run build
 
 然后按该 profile 自己的方式引用这个包（例如在桌面应用的 **Plugins → Add plugin** 里填包名），
 并注意 `cordis.patch.yml` 刻意不带 `config`——装上之后它仍然是 `enabled: false` +
-`mode: 'dry-run'`，需要显式打开。装上之后面板出现在设置页的 `plugins.row.config` 槽位，
-注册键是 `dsh-jev-gate#dsh-jev-gate`；这一步在本机**没有做过**，面板也没有被渲染过。
+`mode: 'dry-run'`，需要显式打开。装上之后配置页出现在 **Settings → 内置插件** 分区里的
+一个专属标签页（槽位 `settings.plugins.tab`，id `jev-gate`，order 20）；这一步在本机
+**没有做过**，标签页也没有被渲染过。

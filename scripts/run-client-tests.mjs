@@ -216,10 +216,14 @@ check(
   `inject 服务清单不符：${JSON.stringify(api.inject)}`,
 )
 // 槽位/命名空间常量：宿主与客户端必须共用同一批字符串。
-check(api.SLOT === 'plugins.row.config', `SLOT 应为 plugins.row.config，实际 ${String(api.SLOT)}`)
+check(api.SLOT === 'settings.plugins.tab', `SLOT 应为 settings.plugins.tab，实际 ${String(api.SLOT)}`)
 check(api.NS === 'dsh-jev-gate.settings', `NS 应为 dsh-jev-gate.settings，实际 ${String(api.NS)}`)
 check(api.ENTRY_NS === 'dsh-jev-gate', `ENTRY_NS 应为 dsh-jev-gate，实际 ${String(api.ENTRY_NS)}`)
-check(api.ROW_KEY === 'dsh-jev-gate#dsh-jev-gate', `ROW_KEY 应为 dsh-jev-gate#dsh-jev-gate，实际 ${String(api.ROW_KEY)}`)
+check(api.TAB_ID === 'jev-gate', `TAB_ID 应为 jev-gate，实际 ${String(api.TAB_ID)}`)
+check(
+  typeof api.TAB_ORDER === 'number' && api.TAB_ORDER > 10,
+  `TAB_ORDER 应为大于 10 的数字（排在只读清单页之后），实际 ${String(api.TAB_ORDER)}`,
+)
 check(api.REF_FIELD === 'deciderCredentialRef', `REF_FIELD 应为 deciderCredentialRef，实际 ${String(api.REF_FIELD)}`)
 
 /* ------------------------------------------------------------------ *
@@ -285,12 +289,18 @@ const log = formPresent.log
 check(log.boundNs === api.NS, `apply 应把 locale 绑定到 ${api.NS}，实际 ${String(log.boundNs)}`)
 check(log.formNs === api.ENTRY_NS, `configForms.get 应查询 ${api.ENTRY_NS}，实际 ${String(log.formNs)}`)
 check(sameJson(log.servedNs, [api.ENTRY_NS]), `whileServed 应只服务 [${api.ENTRY_NS}]，实际 ${JSON.stringify(log.servedNs)}`)
-// 注册必须发生在 plugins.row.config 槽位（从源码读出的槽位 id）。
+// 注册必须发生在设置页的 settings.plugins.tab 槽位（从源码读出的槽位 id）。
 check(sameJson(log.slotInjections, [api.SLOT]), `slots.inject 应注入 ${api.SLOT}，实际 ${JSON.stringify(log.slotInjections)}`)
-check(log.registrations.length === 1, `应恰好注册 1 个行页面，实际 ${log.registrations.length}`)
+check(log.registrations.length === 1, `应恰好注册 1 个设置页标签，实际 ${log.registrations.length}`)
 const registration = log.registrations[0]
 check(registration?.record?.name === api.SLOT, `注册记录的 name 应为 ${api.SLOT}，实际 ${String(registration?.record?.name)}`)
-check(registration?.record?.key === api.ROW_KEY, `注册记录的 key 应为 ${api.ROW_KEY}，实际 ${String(registration?.record?.key)}`)
+check(registration?.record?.id === api.TAB_ID, `注册记录的 id 应为 ${api.TAB_ID}，实际 ${String(registration?.record?.id)}`)
+check(registration?.record?.order === api.TAB_ORDER, `注册记录的 order 应为 ${api.TAB_ORDER}，实际 ${String(registration?.record?.order)}`)
+check(typeof registration?.record?.label === 'function', '注册记录必须提供 label()（设置页据此排标签页）')
+check(
+  registration?.record?.label?.() === 'title',
+  `注册记录的 label() 应解析到本插件字典的 title，实际 ${String(registration?.record?.label?.())}`,
+)
 check(registration?.record?.locale === api.NS, `注册记录的 locale 应为 ${api.NS}，实际 ${String(registration?.record?.locale)}`)
 check(typeof registration?.component === 'function', '注册必须带上一个组件函数')
 check(typeof registration?.record?.inject === 'function', '注册记录必须提供 inject()')

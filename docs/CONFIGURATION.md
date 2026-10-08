@@ -21,7 +21,8 @@
 - `scripts/run-contract-check.mjs` 的第 9 条断言直接检查
   `DEFAULT_CONFIG.enabled === false` 与 `DEFAULT_CONFIG.mode === 'dry-run'`。
 
-要启用，请在**你自己的** profile 的 `cordis.patch.yml` 里按 id 覆盖，或者在插件页的设置面板上改。
+要启用，请在**你自己的** profile 的 `cordis.patch.yml` 里按 id 覆盖，或者在
+**Settings → 内置插件 → Jev 门禁** 那个标签页上改。
 
 ## 二、22 个可配置字段
 

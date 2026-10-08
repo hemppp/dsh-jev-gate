@@ -1,15 +1,33 @@
 /**
- * dsh-jev-gate — browser half: the configuration panel for this row on the Plugins page.
+ * dsh-jev-gate — browser half: the configuration page for this plugin inside Settings.
  *
- * ## Why this slot, and why this key
+ * ## Why this slot, and why an id instead of a key
  *
- * The host dispatches three slots per Loader entry on the Plugins page:
- * `plugins.item` (the official plugin card), `plugins.bundle.config` (keyed by
- * bundle package name) and `plugins.row.config` (keyed by `<package name>#<row id>`,
- * which gives that one row a Configure control). This plugin is a profile bundle
- * whose own `cordis.patch.yml` row *is* its settings surface, so it registers into
- * `plugins.row.config` with the key `dsh-jev-gate#dsh-jev-gate` — package name and
- * row id are both `dsh-jev-gate`.
+ * Settings is assembled from slots too. The host's built-in **Plugins** section
+ * (`settings.section` id `plugins`, contributed by
+ * `@deepseek-ai/dsh-client-ui-settings-plugins`) declares exactly one child:
+ * `settings.plugins.tab`, a **root-scoped list** slot. That section reads the slot
+ * ledger, turns every registration's `id` / `order` / `label` into one tab of its
+ * own tab bar, and renders the winning registration of `renderSlot("settings.plugins.tab",
+ * {}, { only: row.id })` as the tab panel. So a plugin that registers one entry
+ * with an `id`, an `order` and a `label` gets a fully chrome'd, localized tab —
+ * the section owns the navigation entry, the heading and the tab strip; this page
+ * owns only its form.
+ *
+ * This plugin therefore registers into `settings.plugins.tab` with the id
+ * `jev-gate`, ordered after the read-only inventory tab. The other three Plugins
+ * slots — `plugins.item`, `plugins.bundle.config`, `plugins.row.config` — belong to
+ * the Plugins **management** page (`@deepseek-ai/dsh-client-ui-plugin-manager`)
+ * and are deliberately left empty: configuration lives in Settings, where it
+ * belongs, and is not duplicated onto a page whose job is installing plugins.
+ *
+ * ## Why the page is registered only while the host serves it
+ *
+ * `ctx.configForms.whileServed([ENTRY_NS], …)` defers everything that touches the
+ * form scope until the host's describe mirror actually serves this profile entry,
+ * so a deployment that does not install the bundle shows no tab at all instead of
+ * an empty one — and no tab whose component subscribes to a scope that is not
+ * there.
  *
  * ## Why every field is flat
  *
@@ -58,21 +76,27 @@ window.__ModuleLoader__.load({
     } = primitives
 
     /**
-     * The settings namespace of this row.
-     *
-     * The host claims settings forms by **profile entry id**: `describe()` treats
-     * `entry.options.id` as the namespace, and a plugin can neither register one of
-     * its own nor choose a different one. The row this plugin inserts in
-     * `cordis.patch.yml` carries the package name as its id, so both values are the
-     * same string.
+     * Settings namespace of this page: the host claims settings forms by **profile
+     * entry id** (`describe()` treats `entry.options.id` as the namespace, and a
+     * plugin can neither register one of its own nor choose a different one). The
+     * row this plugin inserts in `cordis.patch.yml` carries the package name as its
+     * id, so both values are the same string.
      */
     const ENTRY_NS = 'dsh-jev-gate'
 
-    /** Key for `plugins.row.config`: `<package name>#<row id>`. */
-    const ROW_KEY = 'dsh-jev-gate#dsh-jev-gate'
+    /**
+     * Tab id for `settings.plugins.tab`, and the order it takes in the section's tab
+     * bar. `20` puts this page after the host's read-only inventory tab (`order: 10`)
+     * and keeps the id distinct from it.
+     */
+    const TAB_ID = 'jev-gate'
+    const TAB_ORDER = 20
 
     /** Dictionary namespace of this page (unrelated to the settings namespace). */
     const NS = 'dsh-jev-gate.settings'
+
+    /** The Settings slot this page registers into. */
+    const SLOT = 'settings.plugins.tab'
 
     /**
      * Field name of the secret input. It is deliberately **not** in `FIELDS`: it is
@@ -1210,15 +1234,19 @@ window.__ModuleLoader__.load({
       })
     }
 
-    /** The configuration panel for this row. */
+    /** The configuration page shown inside the Settings tab. */
     function JevGateCard(props) {
       const { t } = props
       const state = props.useJevGate((snapshot) => snapshot)
 
-      if (props.view === 'summary') return t('description')
-
       const disabled = !state.writable
-      const children = []
+      const children = [
+        jsx('p', {
+          key: 'intro',
+          style: { margin: '0 0 14px', opacity: 0.75, fontSize: '0.9em' },
+          children: t('description'),
+        }),
+      ]
       let section = null
 
       for (const row of FIELD_ROWS) {
@@ -1269,12 +1297,12 @@ window.__ModuleLoader__.load({
     const inject = ['slots', 'locale', 'remote', 'remote.credentials', 'configForms']
 
     /**
-     * Mount the configuration panel for this row.
+     * Mount the configuration page in Settings.
      *
      * Nothing that depends on the form scope is built until `whileServed` says the
      * host really serves `ENTRY_NS`: a deployment that does not configure this
-     * plugin gets no panel, and — because the card subscribes to that scope — no
-     * crash either. The dictionaries are registered unconditionally, so a panel
+     * plugin gets no tab at all, and — because the card subscribes to that scope —
+     * no crash either. The dictionaries are registered unconditionally, so a tab
      * appearing later still has its strings.
      * @param ctx - the browser plugin context.
      */
@@ -1291,8 +1319,8 @@ window.__ModuleLoader__.load({
        * `null` for a deployment that does not configure this plugin, and the card's
        * constructor subscribes to that scope (`scope.subscribe(...)`). Building the
        * card outside `whileServed` therefore takes the whole browser half down with
-       * a `TypeError` in exactly the deployment that was supposed to see no panel at
-       * all. `null` here means "no panel", not "broken plugin".
+       * a `TypeError` in exactly the deployment that was supposed to see no page at
+       * all. `null` here means "no tab", not "broken plugin".
        */
       let card = null
       const dropCard = () => {
@@ -1319,21 +1347,22 @@ window.__ModuleLoader__.load({
             dropCard()
             const created = new JevGateForm(scope, ctx)
             card = created
-            return ctx.slots.inject('plugins.row.config', () =>
+            return ctx.slots.inject(SLOT, () =>
               ctx.slots.register(
-                { name: 'plugins.row.config', key: ROW_KEY, locale: NS, inject: () => created.inject() },
+                { name: SLOT, id: TAB_ID, order: TAB_ORDER, label: () => t('title'), locale: NS, inject: () => created.inject() },
                 JevGateCard,
               ),
             )
           }),
-        'dsh-jev-gate: row page',
+        'dsh-jev-gate: settings tab',
       )
     }
 
     exports.NS = NS
     exports.ENTRY_NS = ENTRY_NS
-    exports.ROW_KEY = ROW_KEY
-    exports.SLOT = 'plugins.row.config'
+    exports.TAB_ID = TAB_ID
+    exports.TAB_ORDER = TAB_ORDER
+    exports.SLOT = SLOT
     exports.FIELDS = FIELDS
     exports.FIELD_ROWS = FIELD_ROWS
     exports.PANEL_ONLY_FIELDS = FIELD_ROWS.filter((row) => row.panelOnly === true).map((row) => row.field)
