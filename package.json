@@ -1,6 +1,6 @@
 {
   "name": "dsh-jev-gate",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "跨团队的裁决与优雅干预层 for DeepSeek Harness：不看自述，只看冻结基线与实测证据；在团队的十四个决策点上分级拦停或交人。",
   "type": "module",
   "main": "./lib/index.js",
